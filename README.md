@@ -1,124 +1,186 @@
-<div align="center">
+# TrajICL End-to-End Guide (Raw + Dynamic-Centroid Example Pools)
 
-# Towards Predicting Any Human Trajectory In Context (NeurIPS 2025)
+This README is an end-to-end workflow for running TrajICL in this repository with your dataset placed in:
 
-**[[Paper](https://arxiv.org/abs/2506.00871)] [[Project Page](https://fujiry0.github.io/TrajICL-project-page/)] [[Poster](https://neurips.cc/media/PosterPDFs/NeurIPS%202025/115894.png?t=1763031083.2285979)]**
+- `TrajICL/dataset`
 
-</div>
+It covers:
 
-This is the official code release for our NeurIPS 2025 paper "Towards Predicting Any Human Trajectory In Context".
+1. automatic dataset loading from `dataset/`
+2. raw preprocessing pipeline
+3. dynamic-clustering centroid preprocessing pipeline
+4. training with raw or centroid pools
+5. evaluation with raw or centroid pools
 
-## 🔍 TrajICL
+## 1. Environment Setup
 
-![TrajICL](./misc/concept.png)
-
-Predicting accurate future trajectories requires adaptability, yet fine-tuning for each new scenario is often impractical for edge deployment. To address this, we introduce TrajICL, an In-Context Learning (ICL) framework for pedestrian trajectory prediction that enables robust adaptation to diverse environments at inference time without requiring weight updates.
-
-Our TrajICL implementation includes the following key features:
-
-- **Spatio-Temporal Similarity-based Example Selection (STES):** Selects relevant examples from observed trajectories by identifying similar motion patterns at corresponding locations within the same scene.
-- **Prediction-Guided Example Selection (PG-ES):** Refines example selection by utilizing both past and predicted future trajectories to account for long-term dynamics.
-- **Superior Adaptation & Generalization:** Leverages large-scale synthetic training to achieve remarkable adaptation, outperforming even fine-tuned approaches across in-domain and cross-domain benchmarks.
-
-## 📂 Data Preparation
-
-### Download MOTSynth dataset
+From the repo root:
 
 ```bash
-bash bash scripts/donwnload.sh
+cd /home/zahid/Projects/TrajICL
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### Run Preprocessing Code
+## 2. Dataset Layout (Automatic Loading)
+
+The code now auto-resolves MOTSynth annotations from these layouts, in order:
+
+1. `<data_dir>/motsynth/mot_annotations/...`
+2. `<data_dir>/mot_annotations/...`
+3. `dataset/mot_annotations/...` (repo-local fallback)
+
+Since your data is inside `TrajICL/dataset`, you can run preprocessing without extra path arguments.
+
+Required annotation files per scene:
+
+- `dataset/mot_annotations/<scene_id>/gt/gt.txt`
+
+Optional split files (if present, they are used):
+
+- `dataset/motsynth_train.txt`
+- `dataset/motsynth_val.txt`
+
+If split files are missing, the loader auto-builds deterministic splits from available scenes:
+
+- first 80% scenes -> train
+- last 20% scenes -> val
+
+## 3. Raw Preprocessing (Standard TrajICL Pool)
+
+Run full raw preprocessing (window extraction, fold split, similarity matrix, similar-trajectory dicts):
 
 ```bash
-bash bash scripts/preprocess.sh
+python preprocess.py --name motsynth --stage all
 ```
 
-### Run Centroid Preprocessing (Dynamic Clustering)
+Output directory:
 
-`preprocess_centroids.py` implements centroid example-pool generation using the paper
-“Efficient Dense Crowd Trajectory Prediction Via Dynamic Clustering”:
-- nested agglomerative clustering (`direction -> location`)
-- LOF-based dynamic re-evaluation every 10 frames
-- outlier reassignment + temporary-pool re-clustering
-- delta-based centroid trajectory updates to reduce jump artifacts under membership changes
+- `processed_data/motsynth`
+
+Key artifacts:
+
+- `train_trajs.pt`, `val_trajs.pt`
+- `train_masks.pt`, `val_masks.pt`
+- `*_pool_indices_by_fold.pickle`
+- `*_valid_indices_by_fold.pickle`
+- `*_sim_matrix_dicts.pt`
+- `*_similar_traj_dicts_hist.pickle`
+- `*_similar_traj_dicts_seq.pickle`
+
+## 4. Centroid Preprocessing (Dynamic Clustering, Paper-Grounded)
+
+Run centroid preprocessing end-to-end:
 
 ```bash
-python preprocess_centroids.py \
-  --name motsynth \
-  --data_dir data \
-  --save_root processed_data \
-  --direction_thresh_deg 50 \
-  --distance_thresh_px 120 \
-  --lof_contamination 0.2 \
-  --lof_neighbor_ratio 0.8 \
-  --reeval_interval 10 \
-  --temporary_recluster_min_size 10
+python preprocess_centroids.py --name motsynth --stage all
 ```
 
-By default, outputs are written to `processed_data/<dataset>_centroid` in the same TrajICL
-processed format (`*_trajs.pt`, masks, fold splits, similarity dicts), plus centroid metadata sidecars:
-- `<split>_centroid_metadata.json`
-- `<split>_centroid_metadata_by_scene.json`
+This runs:
 
-## 🔥 Training
+1. dynamic nested clustering per sequence (`direction -> location`)
+2. LOF-based re-evaluation every 10 frames
+3. outlier reassignment + temporary-pool re-clustering
+4. centroid trajectory generation using delta updates (not per-frame full raw mean)
+5. similarity/preselection artifacts in the same format as raw preprocessing
 
-### 1. Vanilla trajectory prediction (VTP) training
+Paper-default parameters used by default:
 
-VTP checkpoints are saved in `results/TrajICL`.
+- `--distance_thresh_px 120`
+- `--direction_thresh_deg 50`
+- `--lof_contamination 0.2`
+- `--lof_neighbor_ratio 0.8`
+- `--reeval_interval 10`
+- `--temporary_recluster_min_size 10`
+
+Output directory:
+
+- `processed_data/motsynth_centroid`
+
+Centroid metadata sidecars:
+
+- `train_centroid_metadata.json`
+- `val_centroid_metadata.json`
+- `train_centroid_metadata_by_scene.json`
+- `val_centroid_metadata_by_scene.json`
+
+## 5. Train with Raw Pool
+
+Raw pool is default (`dataset.example_pool_type=raw`):
 
 ```bash
-python train.py
+python train.py -m dataset.name=motsynth dataset.example_pool_type=raw
 ```
 
-To train with centroid example pools, set:
+## 6. Train with Centroid Pool
+
+Switch only the example pool type:
 
 ```bash
-python train.py -m dataset.example_pool_type=centroid
+python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
 ```
 
-### 2. In-context training
+The dataloader automatically reads from:
 
-For load_model.model_path, please specify the relative path (inside the `results/TrajICL` directory) to the checkpoint saved during VTP training.
+- `processed_data/motsynth_centroid`
 
-Example: If the full path is `results/TrajICL/robust-sunset-33/best_val_checkpoint.pth`.tar, you should set load_model.model_path to `robust-sunset-33/best_val_checkpoint.pth`.tar.
+No model-core changes are required.
+
+## 7. Evaluate with Raw or Centroid Pool
+
+Raw pool:
 
 ```bash
-python train.py -m training.epochs=400 training.warmup_steps=12 dataset.num_example=8　load_model.model_path=robust-sunset-33/best_val_checkpoint.pth.tar
+python eval.py --dataset_name motsynth --example_pool_type raw
 ```
 
-> ⚠️ Note: The path `robust-sunset-33/best_val_checkpoint.pth.tar` shown in the -m option above is just an example. Please modify this value to match the actual checkpoint path generated after running the VTP training (Step 1).
-
-## 🔍 Evaluation
+Centroid pool:
 
 ```bash
-python eval.py
+python eval.py --dataset_name motsynth --example_pool_type centroid
 ```
 
-Evaluate with centroid pools:
+## 8. One-Pass End-to-End Command Sequence
+
+Run this once from repo root:
 
 ```bash
-python eval.py --example_pool_type centroid
+python preprocess.py --name motsynth --stage all
+python preprocess_centroids.py --name motsynth --stage all
+python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
+python eval.py --dataset_name motsynth --example_pool_type centroid
 ```
 
-## ✅ TODO
+## 9. Quick Troubleshooting
 
-- [ ] Add prediction-guided example selection code
-- [ ] Add other datasets
+If preprocessing says it cannot find MOTSynth annotations:
 
-## 👏 Acknowledgement
+1. check `dataset/mot_annotations/<scene_id>/gt/gt.txt` exists
+2. rerun with explicit path:
 
-We sincerely thank the authors of Social-Transmotion for providing their [source code](https://github.com/vita-epfl/social-transmotion), which has been invaluable to our work. We are immensely grateful for their contribution.
-
-## ✍️ Citation
-
-If you use this code for your research, please cite our paper.
-
-```bib
-@article{Fujii2025TrajICL,
-  title = {Towards Predicting Any Human Trajectory In Context},
-  author= {Fujii, Ryo and Hachiuma, Ryo and Saito, Hideo},
-  journal={Advances in Neural Information Processing Systems (NeurIPS)},
-  year={2025}
-}
+```bash
+python preprocess.py --name motsynth --stage all --data_dir dataset
+python preprocess_centroids.py --name motsynth --stage all --data_dir dataset
 ```
+
+If centroid training fails due to missing processed files, ensure this exists first:
+
+- `processed_data/motsynth_centroid/train_trajs.pt`
+- `processed_data/motsynth_centroid/train_similar_traj_dicts_hist.pickle`
+
+## 10. Config Knobs You Can Use
+
+Default config file:
+
+- `configs/config.yaml`
+
+Relevant fields:
+
+- `dataset.name: motsynth`
+- `dataset.example_pool_type: raw | centroid`
+- `dataset.centroid_suffix: _centroid`
+- `dataset.prompting: sim | random`
+- `dataset.num_example: <int>`
+
+This is sufficient to run TrajICL end-to-end directly from `TrajICL/dataset` with either raw or centroid example pools.

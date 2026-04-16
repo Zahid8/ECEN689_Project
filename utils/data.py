@@ -135,12 +135,11 @@ def drop_distant_far(xy, r=6):
 
 # motsynth ###
 def load_motsynth(split, r=50, resize=1, stride=21, data_dir="data"):
-
-    with open(f"{data_dir}/motsynth/motsynth_{split}.txt", "r") as file:
-        static_scenes = [line.strip() for line in file]
+    motsynth_root = resolve_motsynth_root(data_dir)
+    static_scenes = get_motsynth_scene_split(motsynth_root, split)
 
     trajectories, filename_list, frames_list, pedestrians_list = (
-        prepare_data_motsynth(static_scenes, stride=stride, data_dir=data_dir)
+        prepare_data_motsynth(static_scenes, stride=stride, motsynth_root=motsynth_root)
     )
 
     joint_and_mask = []
@@ -169,6 +168,70 @@ def load_motsynth(split, r=50, resize=1, stride=21, data_dir="data"):
         )
 
     return joint_and_mask, filename_list, frames_list, pedestrians_list
+
+
+def resolve_motsynth_root(data_dir: str) -> str:
+    """
+    Resolve the MOTSynth root directory automatically.
+
+    Supported layouts:
+    - <data_dir>/motsynth/mot_annotations/...
+    - <data_dir>/mot_annotations/...
+    - dataset/mot_annotations/... (fallback for this repository)
+    """
+    candidates = [
+        os.path.join(data_dir, "motsynth"),
+        data_dir,
+    ]
+    if data_dir != "dataset":
+        candidates.append("dataset")
+
+    for candidate in candidates:
+        mot_annotations = os.path.join(candidate, "mot_annotations")
+        if os.path.isdir(mot_annotations):
+            return candidate
+
+    raise FileNotFoundError(
+        "Could not find MOTSynth annotations. Expected one of: "
+        f"{os.path.join(data_dir, 'motsynth', 'mot_annotations')} or "
+        f"{os.path.join(data_dir, 'mot_annotations')} or dataset/mot_annotations"
+    )
+
+
+def get_motsynth_scene_split(motsynth_root: str, split: str):
+    """
+    Load MOTSynth split list from text files when available.
+    If split files are absent, build deterministic 80/20 train/val splits from
+    available annotation directories.
+    """
+    split_file = os.path.join(motsynth_root, f"motsynth_{split}.txt")
+    if os.path.isfile(split_file):
+        with open(split_file, "r") as file:
+            return [line.strip() for line in file if line.strip()]
+
+    mot_annotations = os.path.join(motsynth_root, "mot_annotations")
+    scene_dirs = sorted(
+        [
+            d
+            for d in os.listdir(mot_annotations)
+            if os.path.isdir(os.path.join(mot_annotations, d))
+            and os.path.isfile(os.path.join(mot_annotations, d, "gt", "gt.txt"))
+        ]
+    )
+    if not scene_dirs:
+        raise FileNotFoundError(
+            f"No scenes with gt/gt.txt found under {mot_annotations}"
+        )
+
+    split_idx = int(len(scene_dirs) * 0.8)
+    if split == "train":
+        return scene_dirs[:split_idx]
+    if split == "val":
+        return scene_dirs[split_idx:]
+    if split == "test":
+        return scene_dirs[split_idx:]
+
+    raise ValueError(f"Unsupported split: {split}")
 
 
 def make_motsynth_df(file_path):
@@ -201,7 +264,7 @@ def prepare_data_motsynth(
     step=10,
     seq_len=21,
     stride=21,
-    data_dir="data",
+    motsynth_root="dataset",
 ):
 
     trajectories = []
@@ -210,7 +273,9 @@ def prepare_data_motsynth(
     pedestrians_list = []
 
     for static_scene in static_scenes:
-        file_path = f"{data_dir}/motsynth/mot_annotations/{static_scene}/gt/gt.txt"
+        file_path = os.path.join(
+            motsynth_root, "mot_annotations", static_scene, "gt", "gt.txt"
+        )
         df = make_motsynth_df(file_path)  # trackId, frame, x, y, sceneId, rec&trackId
         frames = sorted(np.unique(df["frame"]).tolist())
         frames = [i for i in range(frames[0], frames[-1] + 1)]
