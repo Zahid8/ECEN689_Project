@@ -38,6 +38,13 @@ def parse_args():
         default="sim",
         help="Prompting method setting for the dataset configuration.",
     ) # random / sim
+    parser.add_argument(
+        "--example_pool_type",
+        type=str,
+        choices=["raw", "centroid"],
+        default="raw",
+        help="Which processed pool to use: raw or centroid.",
+    )
     return parser.parse_args()
 
 def main():
@@ -76,6 +83,7 @@ def main():
     # --- 🔄 Update Configuration with Arguments ---
     cfg.dataset.prompting = args.prompting_method
     cfg.dataset.name = dataset_name # Update dataset name for dataloader creation
+    cfg.dataset.example_pool_type = args.example_pool_type
 
 
     # --- 🏗️ Model Initialization and Loading ---

@@ -8,8 +8,18 @@ import torch
 def load_processed_data(
     split,
     name,
+    example_pool_type="raw",
+    centroid_suffix="_centroid",
 ):
-    save_dir = f"processed_data/{name}"
+    if example_pool_type == "centroid":
+        if name.endswith(centroid_suffix):
+            processed_name = name
+        else:
+            processed_name = f"{name}{centroid_suffix}"
+    else:
+        processed_name = name
+
+    save_dir = f"processed_data/{processed_name}"
     # split = "val"
     trajs = torch.load(f"{save_dir}/{split}_trajs.pt")
     masks = torch.load(f"{save_dir}/{split}_masks.pt")

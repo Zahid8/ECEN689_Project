@@ -39,6 +39,8 @@ dataset:
   num_example: 0
   prompting: sim
   pool_ratio: 1
+  example_pool_type: raw
+  centroid_suffix: _centroid
 
 model:
   num_future: 20

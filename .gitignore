@@ -86,3 +86,14 @@ data/motsynth/*
 .isort.cfg
 .vscode/*
 __MACOSX/*
+
+# Ignore dataset archives
+*.zip
+
+# Dataset archives/*.zip
+
+# Dataset archives
+dataset/*.zip
+
+# Ignore all zip files
+*.zip

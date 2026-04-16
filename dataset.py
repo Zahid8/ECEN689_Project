@@ -18,6 +18,8 @@ class Dataset(torch.utils.data.Dataset):
         num_example=0,
         prompting="random",
         pool_ratio=1,
+        example_pool_type="raw",
+        centroid_suffix="_centroid",
     ):
 
         self.name = name
@@ -28,6 +30,8 @@ class Dataset(torch.utils.data.Dataset):
         self.num_example = num_example
         self.prompting = prompting
         self.pool_ratio = pool_ratio
+        self.example_pool_type = example_pool_type
+        self.centroid_suffix = centroid_suffix
         (
             self.trajs,
             self.masks,
@@ -40,6 +44,8 @@ class Dataset(torch.utils.data.Dataset):
         ) = load_processed_data(
             split,
             name,
+            example_pool_type=example_pool_type,
+            centroid_suffix=centroid_suffix,
         )
 
         if split == "train":
@@ -93,6 +99,8 @@ class Dataset(torch.utils.data.Dataset):
 
 
 def create_dataset(split, cfg):
+    example_pool_type = cfg.dataset.get("example_pool_type", "raw")
+    centroid_suffix = cfg.dataset.get("centroid_suffix", "_centroid")
 
     dataset = Dataset(
         name=cfg.dataset.name,
@@ -102,6 +110,8 @@ def create_dataset(split, cfg):
         num_example=cfg["dataset"]["num_example"],
         prompting=cfg["dataset"]["prompting"],
         pool_ratio=1,
+        example_pool_type=example_pool_type,
+        centroid_suffix=centroid_suffix,
     )
 
     return dataset

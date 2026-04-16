@@ -34,6 +34,33 @@ bash bash scripts/donwnload.sh
 bash bash scripts/preprocess.sh
 ```
 
+### Run Centroid Preprocessing (Dynamic Clustering)
+
+`preprocess_centroids.py` implements centroid example-pool generation using the paper
+“Efficient Dense Crowd Trajectory Prediction Via Dynamic Clustering”:
+- nested agglomerative clustering (`direction -> location`)
+- LOF-based dynamic re-evaluation every 10 frames
+- outlier reassignment + temporary-pool re-clustering
+- delta-based centroid trajectory updates to reduce jump artifacts under membership changes
+
+```bash
+python preprocess_centroids.py \
+  --name motsynth \
+  --data_dir data \
+  --save_root processed_data \
+  --direction_thresh_deg 50 \
+  --distance_thresh_px 120 \
+  --lof_contamination 0.2 \
+  --lof_neighbor_ratio 0.8 \
+  --reeval_interval 10 \
+  --temporary_recluster_min_size 10
+```
+
+By default, outputs are written to `processed_data/<dataset>_centroid` in the same TrajICL
+processed format (`*_trajs.pt`, masks, fold splits, similarity dicts), plus centroid metadata sidecars:
+- `<split>_centroid_metadata.json`
+- `<split>_centroid_metadata_by_scene.json`
+
 ## 🔥 Training
 
 ### 1. Vanilla trajectory prediction (VTP) training
@@ -42,6 +69,12 @@ VTP checkpoints are saved in `results/TrajICL`.
 
 ```bash
 python train.py
+```
+
+To train with centroid example pools, set:
+
+```bash
+python train.py -m dataset.example_pool_type=centroid
 ```
 
 ### 2. In-context training
@@ -60,6 +93,12 @@ python train.py -m training.epochs=400 training.warmup_steps=12 dataset.num_exam
 
 ```bash
 python eval.py
+```
+
+Evaluate with centroid pools:
+
+```bash
+python eval.py --example_pool_type centroid
 ```
 
 ## ✅ TODO
