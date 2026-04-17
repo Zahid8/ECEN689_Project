@@ -294,6 +294,62 @@ def make_side_by_side_pairs(
     plt.close(fig)
 
 
+def make_before_after_figure(
+    raw_trajs,
+    raw_masks,
+    raw_idx,
+    cen_trajs,
+    cen_masks,
+    cen_idx,
+    hist_len,
+    max_agents,
+    out_path,
+):
+    plt, _ = _prepare_matplotlib()
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5.2))
+
+    raw_xy, raw_mask = to_xy_mask(raw_trajs[raw_idx], raw_masks[raw_idx])
+    cen_xy, cen_mask = to_xy_mask(cen_trajs[cen_idx], cen_masks[cen_idx])
+
+    _plot_agent_trajectories(
+        axes[0],
+        raw_xy,
+        raw_mask,
+        hist_len,
+        max_agents,
+        title=f"Before (RAW) | idx={raw_idx} | agents={raw_xy.shape[0]}",
+    )
+    _plot_agent_trajectories(
+        axes[1],
+        cen_xy,
+        cen_mask,
+        hist_len,
+        max_agents,
+        title=f"After (CENTROID) | idx={cen_idx} | agents={cen_xy.shape[0]}",
+    )
+
+    legend_text = (
+        "Blue: primary track\n"
+        "Orange: context tracks\n"
+        "Solid: history, Dashed: future"
+    )
+    fig.text(
+        0.5,
+        0.01,
+        legend_text,
+        ha="center",
+        va="bottom",
+        fontsize=10,
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85, edgecolor="0.8"),
+    )
+
+    fig.suptitle("Before vs After: Raw Trajectories vs Centroid Representation", fontsize=14)
+    fig.tight_layout(rect=[0, 0.06, 1, 0.95])
+    fig.savefig(out_path, dpi=190, bbox_inches="tight")
+    plt.close(fig)
+
+
 def save_hist_compare(raw_vals, cen_vals, xlabel, title, out_path, bins=40):
     plt, _ = _prepare_matplotlib()
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -442,10 +498,22 @@ def main():
         )
 
         print("Generating sample trajectory grids...")
+        before_after = os.path.join(out_dir, "00_before_vs_after_raw_vs_centroid.png")
         raw_grid = os.path.join(out_dir, "01_raw_samples_grid.png")
         cen_grid = os.path.join(out_dir, "02_centroid_samples_grid.png")
         pair_grid = os.path.join(out_dir, "03_raw_vs_centroid_pairs.png")
 
+        make_before_after_figure(
+            raw_trajs,
+            raw_masks,
+            raw_sample_idxs[0],
+            cen_trajs,
+            cen_masks,
+            cen_sample_idxs[0],
+            args.hist_len,
+            args.max_agents_per_plot,
+            before_after,
+        )
         make_samples_grid(
             raw_trajs,
             raw_masks,
@@ -551,6 +619,7 @@ def main():
         )
 
         ordered_pngs = [
+            before_after,
             raw_grid,
             cen_grid,
             pair_grid,
