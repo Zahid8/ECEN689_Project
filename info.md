@@ -7,6 +7,8 @@ This document is a full technical implementation record for the work added to th
 3. Dataset auto-resolution from `dataset/`
 4. Unified artifact routing to `outputs/`
 5. Full terminal stdout/stderr run logging
+6. Automated raw-vs-centroid benchmarking with metrics/CSV/plots
+7. Automated checkpoint-vs-checkpoint benchmarking (baseline vs candidate)
 
 ---
 
@@ -27,7 +29,9 @@ The centroid path is implemented in `preprocess_centroids.py` and integrated suc
 
 1. `preprocess_centroids.py`
 2. `utils/run_logging.py`
-3. `info.md` (this document)
+3. `compare_raw_vs_centroid.py`
+4. `compare_checkpoints.py`
+5. `info.md` (this document)
 
 ### Modified files
 
@@ -345,6 +349,9 @@ Defaults changed to route artifacts under outputs:
 
 1. `save_root` default from `processed_data` -> `outputs/processed_data`
 2. same for helper `save_data` and `load_processed_data` defaults
+3. Stage-3 similarity worker argument passing was optimized so each worker receives
+   only per-file matrices (`dist_matrix`, `vel_matrix`) instead of the entire
+   similarity dictionary, eliminating multi-GB per-task IPC overhead.
 
 ## 5.5 Train/eval/output configuration
 
@@ -434,6 +441,7 @@ Auto starts and finalizes logging in `main`.
 2. checkpoints -> `outputs/TrajICL/<run_name>/`
 3. wandb local files -> `outputs/wandb/`
 4. processed datasets -> `outputs/processed_data/`
+5. benchmark reports -> `outputs/comparison/`
 
 ---
 
@@ -544,6 +552,7 @@ Single root for all artifacts simplifies reproducibility and cleanup.
 1. defaults route to `outputs/processed_data`
 2. run-log CLI options (`--log_dir`, `--disable_file_logging`)
 3. automatic run logging via `start_run_logging` + `finalize_run_logging`
+4. Stage-3 parallel similarity computation now passes only per-file matrices to workers
 
 ### `train.py`
 
@@ -559,9 +568,155 @@ Single root for all artifacts simplifies reproducibility and cleanup.
 
 1. `setup_wandb_logging` now creates `outputs` subdirs and routes wandb local files into `outputs/wandb`
 
+### `compare_raw_vs_centroid.py`
+
+1. runs evaluation for `raw` and `centroid` pools with a shared checkpoint
+2. supports configurable shots (`--shots`, default `0,2,4,8`)
+3. emits machine-readable metrics:
+   1. `metrics_comparison.json`
+   2. `metrics_long.csv`
+   3. `metrics_summary.csv`
+4. emits plots:
+   1. ADE vs shot (`raw` vs `centroid`)
+   2. FDE vs shot (`raw` vs `centroid`)
+   3. ADE improvement % vs shot
+   4. FDE improvement % vs shot
+5. writes benchmark outputs under `outputs/comparison/raw_vs_centroid_<timestamp>/`
+6. copies plot artifacts into `outputs/plots/` and `outputs/graphs/`
+7. supports automatic run logging via `utils/run_logging.py`
+
+### `compare_checkpoints.py`
+
+1. compares two checkpoints directly:
+   1. baseline checkpoint (`--baseline_model_path`)
+   2. candidate checkpoint (`--candidate_model_path`)
+2. evaluates across configurable pools (`--pools raw,centroid`) and shots (`--shots`)
+3. produces:
+   1. `checkpoint_comparison.json`
+   2. `metrics_long.csv`
+   3. `metrics_pairwise.csv`
+4. computes candidate-vs-baseline deltas/improvement percentages for ADE/FDE
+5. generates per-pool plots:
+   1. ADE vs shot
+   2. FDE vs shot
+   3. ADE improvement %
+   4. FDE improvement %
+6. writes artifacts under `outputs/comparison/checkpoint_vs_checkpoint_<timestamp>/`
+7. copies plots to `outputs/plots/` and `outputs/graphs/`
+8. supports automatic terminal logging to `outputs/logs/compare_checkpoints_<timestamp>.log`
+
 ---
 
-## 11) Operational Notes
+## 11) Benchmark Script Details (`compare_raw_vs_centroid.py`)
+
+Purpose: reproducible side-by-side benchmark package for raw vs centroid pool performance.
+
+### Inputs
+
+1. `--model_path` (required)
+2. `--dataset_name` (default `motsynth`)
+3. `--prompting_method` (default `sim`)
+4. `--shots` (default `0,2,4,8`)
+5. `--processed_root` (default `outputs/processed_data`)
+6. `--device` (default `cuda`)
+
+### Pool checks
+
+Before evaluation, script validates:
+
+1. `outputs/processed_data/<dataset_name>` exists (raw)
+2. `outputs/processed_data/<dataset_name>_centroid` exists (centroid)
+
+### Metric computation
+
+For each shot:
+
+1. evaluates raw pool
+2. evaluates centroid pool
+3. records ADE/FDE for each
+4. computes deltas and relative improvements:
+   1. `ade_delta_raw_minus_centroid`
+   2. `fde_delta_raw_minus_centroid`
+   3. `ade_improve_pct`
+   4. `fde_improve_pct`
+
+### Outputs
+
+In `outputs/comparison/raw_vs_centroid_<timestamp>/`:
+
+1. `metrics_comparison.json`
+2. `metrics_long.csv`
+3. `metrics_summary.csv`
+4. `ade_vs_shot_raw_vs_centroid.png`
+5. `fde_vs_shot_raw_vs_centroid.png`
+6. `ade_improve_pct_vs_shot.png`
+7. `fde_improve_pct_vs_shot.png`
+
+### Logging
+
+Standard output/error is automatically logged to:
+
+1. `outputs/logs/compare_raw_vs_centroid_<timestamp>.log`
+
+### Dependency behavior
+
+The script lazy-loads heavy dependencies so CLI help can run even if runtime
+packages are missing in the current shell.
+
+---
+
+## 12) Benchmark Script Details (`compare_checkpoints.py`)
+
+Purpose: compare two trained checkpoints in a single consolidated report.
+
+Typical use case:
+
+1. baseline = original-trained checkpoint
+2. candidate = centroid-trained checkpoint
+
+### Inputs
+
+1. `--baseline_model_path` (required)
+2. `--candidate_model_path` (required)
+3. `--baseline_label` / `--candidate_label`
+4. `--dataset_name`
+5. `--prompting_method`
+6. `--shots`
+7. `--pools` (raw, centroid, or both)
+8. `--processed_root`
+9. `--device`
+
+### Output metrics
+
+For each pool and shot, script records:
+
+1. baseline ADE/FDE
+2. candidate ADE/FDE
+3. delta (`baseline - candidate`)
+4. improvement % (`(baseline - candidate)/baseline * 100`)
+
+### Output files
+
+In `outputs/comparison/checkpoint_vs_checkpoint_<timestamp>/`:
+
+1. `checkpoint_comparison.json`
+2. `metrics_long.csv`
+3. `metrics_pairwise.csv`
+4. plot set for each pool:
+   1. ADE vs shot
+   2. FDE vs shot
+   3. ADE improvement % vs shot
+   4. FDE improvement % vs shot
+
+### Logging
+
+Automatic run log:
+
+1. `outputs/logs/compare_checkpoints_<timestamp>.log`
+
+---
+
+## 13) Operational Notes
 
 1. If environment lacks required packages (`omegaconf`, etc.), script startup will fail before model/pipeline logic.
 2. `preprocess.py` supports only known dataset names in `infer_r_stride` (`motsynth`, `jrdb`, `jta`).
@@ -569,16 +724,19 @@ Single root for all artifacts simplifies reproducibility and cleanup.
 
 ---
 
-## 12) Quick Verification Commands
+## 14) Quick Verification Commands
 
 ```bash
 python -m py_compile \
   utils/run_logging.py utils/data.py load_data.py dataset.py \
+  compare_raw_vs_centroid.py compare_checkpoints.py \
   preprocess.py preprocess_centroids.py train.py eval.py
 
 python preprocess.py --help
 python preprocess_centroids.py --help
 python eval.py --help
+python compare_raw_vs_centroid.py --help
+python compare_checkpoints.py --help
 
 ls -1t outputs/logs | head
 ```

@@ -177,6 +177,86 @@ python eval.py --dataset_name motsynth --example_pool_type centroid
 
 ---
 
+## Raw vs Centroid Benchmark (Metrics + Plots)
+
+Use the comparison script to evaluate both pool types with the same checkpoint and save a full report.
+
+Prerequisites:
+
+1. raw processed pool exists: `outputs/processed_data/motsynth`
+2. centroid processed pool exists: `outputs/processed_data/motsynth_centroid`
+3. trained checkpoint exists: `outputs/TrajICL/<run_name>/best_val_checkpoint.pth.tar`
+
+Run:
+
+```bash
+python compare_raw_vs_centroid.py \
+  --model_path outputs/TrajICL/<run_name>/best_val_checkpoint.pth.tar \
+  --dataset_name motsynth \
+  --prompting_method sim \
+  --device cuda
+```
+
+Saved outputs:
+
+1. `outputs/comparison/raw_vs_centroid_<timestamp>/metrics_comparison.json`
+2. `outputs/comparison/raw_vs_centroid_<timestamp>/metrics_long.csv`
+3. `outputs/comparison/raw_vs_centroid_<timestamp>/metrics_summary.csv`
+4. `outputs/comparison/raw_vs_centroid_<timestamp>/ade_vs_shot_raw_vs_centroid.png`
+5. `outputs/comparison/raw_vs_centroid_<timestamp>/fde_vs_shot_raw_vs_centroid.png`
+6. `outputs/comparison/raw_vs_centroid_<timestamp>/ade_improve_pct_vs_shot.png`
+7. `outputs/comparison/raw_vs_centroid_<timestamp>/fde_improve_pct_vs_shot.png`
+
+Plots are also copied to:
+
+1. `outputs/plots/`
+2. `outputs/graphs/`
+
+Terminal log:
+
+1. `outputs/logs/compare_raw_vs_centroid_<timestamp>.log`
+
+---
+
+## Checkpoint vs Checkpoint Benchmark (Original-trained vs Centroid-trained)
+
+Use this script when you want to compare **two different checkpoints** directly in one report.
+
+Example: compare an original-trained checkpoint (baseline) against a centroid-trained checkpoint (candidate).
+
+Run:
+
+```bash
+python compare_checkpoints.py \
+  --baseline_model_path outputs/TrajICL/<original_run>/best_val_checkpoint.pth.tar \
+  --candidate_model_path outputs/TrajICL/<centroid_run>/best_val_checkpoint.pth.tar \
+  --baseline_label original_trained \
+  --candidate_label centroid_trained \
+  --dataset_name motsynth \
+  --prompting_method sim \
+  --pools raw,centroid \
+  --shots 0,2,4,8 \
+  --device cuda
+```
+
+Saved outputs:
+
+1. `outputs/comparison/checkpoint_vs_checkpoint_<timestamp>/checkpoint_comparison.json`
+2. `outputs/comparison/checkpoint_vs_checkpoint_<timestamp>/metrics_long.csv`
+3. `outputs/comparison/checkpoint_vs_checkpoint_<timestamp>/metrics_pairwise.csv`
+4. per-pool ADE/FDE line plots and improvement plots
+
+Plots are also copied to:
+
+1. `outputs/plots/`
+2. `outputs/graphs/`
+
+Terminal log:
+
+1. `outputs/logs/compare_checkpoints_<timestamp>.log`
+
+---
+
 ## Output Structure
 
 All artifacts are stored under `outputs/`:
@@ -187,6 +267,7 @@ All artifacts are stored under `outputs/`:
 4. `outputs/wandb/` -> wandb local files
 5. `outputs/plots/` -> plots
 6. `outputs/graphs/` -> graphs
+7. `outputs/comparison/` -> raw-vs-centroid benchmark reports
 
 ---
 
