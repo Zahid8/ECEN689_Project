@@ -316,6 +316,7 @@ dataset:
   example_pool_type: raw        # raw | centroid
   centroid_suffix: _centroid
   processed_root: outputs/processed_data
+  load_similarity_seq: false    # keep false unless seq-similarity is explicitly needed
 
 output_dir: outputs
 ```
@@ -339,6 +340,29 @@ Verify these files exist:
 
 1. `outputs/processed_data/motsynth_centroid/train_trajs.pt`
 2. `outputs/processed_data/motsynth_centroid/train_similar_traj_dicts_hist.pickle`
+
+## Training gets killed with no traceback
+
+If training stops with just `Killed`, this is usually an OS OOM kill (memory pressure),
+most commonly with centroid pool + multi-worker dataloading.
+
+Use this safer command:
+
+```bash
+python train.py -m \
+  dataset.name=motsynth \
+  dataset.example_pool_type=centroid \
+  dataset.load_similarity_seq=false \
+  training.num_workers=0 \
+  training.batch_size=8 \
+  wandb=False
+```
+
+Why this helps:
+
+1. `dataset.load_similarity_seq=false` avoids loading the very large optional seq-similarity pickle.
+2. `training.num_workers=0` prevents worker memory amplification.
+3. smaller `training.batch_size` reduces runtime memory use.
 
 ## Stage 3 (`traj_sim`) appears stuck for hours
 

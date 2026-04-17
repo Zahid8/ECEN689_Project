@@ -42,6 +42,7 @@ dataset:
   example_pool_type: raw
   centroid_suffix: _centroid
   processed_root: outputs/processed_data
+  load_similarity_seq: False
 
 model:
   num_future: 20

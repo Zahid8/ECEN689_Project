@@ -326,10 +326,12 @@ Updated `load_processed_data(...)` signature:
 1. `example_pool_type` (`raw` or `centroid`)
 2. `centroid_suffix` (default `_centroid`)
 3. `processed_root` (default `outputs/processed_data`)
+4. `load_similarity_seq` (default `False`)
 
 Behavior:
 1. when centroid mode is selected, dataset name maps to `<name><suffix>` unless suffix already present
 2. processed artifacts loaded from `processed_root/<resolved_name>`
+3. sequence-similarity dictionary loading is optional and disabled by default to reduce training RAM footprint
 
 ## 5.3 Dataset object wiring (`dataset.py`)
 
@@ -338,6 +340,7 @@ Behavior:
 1. `example_pool_type`
 2. `centroid_suffix`
 3. `processed_root`
+4. `load_similarity_seq`
 
 `create_dataset(...)` now pulls these from config and passes to loader.
 
@@ -363,6 +366,7 @@ Defaults changed to route artifacts under outputs:
 1. `output_dir: outputs`
 2. `dataset.processed_root: outputs/processed_data`
 3. keeps `dataset.example_pool_type` and `dataset.centroid_suffix`
+4. sets `dataset.load_similarity_seq: False` by default for memory stability
 
 2. `eval.py`
 1. default model path changed to `outputs/TrajICL/...`
@@ -544,11 +548,11 @@ Single root for all artifacts simplifies reproducibility and cleanup.
 
 ### `load_data.py`
 
-1. `load_processed_data` now supports `example_pool_type`, `centroid_suffix`, `processed_root`
+1. `load_processed_data` now supports `example_pool_type`, `centroid_suffix`, `processed_root`, `load_similarity_seq`
 
 ### `dataset.py`
 
-1. `Dataset.__init__` now accepts/propagates `example_pool_type`, `centroid_suffix`, `processed_root`
+1. `Dataset.__init__` now accepts/propagates `example_pool_type`, `centroid_suffix`, `processed_root`, `load_similarity_seq`
 2. `create_dataset` reads same config keys
 
 ### `preprocess.py`
@@ -726,6 +730,10 @@ Automatic run log:
 1. If environment lacks required packages (`omegaconf`, etc.), script startup will fail before model/pipeline logic.
 2. `preprocess.py` supports only known dataset names in `infer_r_stride` (`motsynth`, `jrdb`, `jta`).
 3. `preprocess_centroids.py` currently processes each existing trajectory window independently (matching repository's sample-level data layout).
+4. If training exits with only `Killed`, this is typically an OS OOM kill; recommended overrides are:
+   1. `dataset.load_similarity_seq=false`
+   2. `training.num_workers=0`
+   3. lower `training.batch_size`
 
 ---
 

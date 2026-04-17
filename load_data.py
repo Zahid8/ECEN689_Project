@@ -11,6 +11,7 @@ def load_processed_data(
     example_pool_type="raw",
     centroid_suffix="_centroid",
     processed_root="outputs/processed_data",
+    load_similarity_seq=False,
 ):
     if example_pool_type == "centroid":
         if name.endswith(centroid_suffix):
@@ -55,11 +56,12 @@ def load_processed_data(
         similarity_dicts = pickle.load(fi)
 
     similarity_dicts_seq = None
-    with open(
-        f"{save_dir}/{split}_similar_traj_dicts_seq.pickle",
-            mode="br",
-    ) as fi:
-        similarity_dicts_seq = pickle.load(fi)
+    if load_similarity_seq:
+        with open(
+            f"{save_dir}/{split}_similar_traj_dicts_seq.pickle",
+                mode="br",
+        ) as fi:
+            similarity_dicts_seq = pickle.load(fi)
 
     return (
         trajs,

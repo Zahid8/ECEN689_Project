@@ -21,6 +21,7 @@ class Dataset(torch.utils.data.Dataset):
         example_pool_type="raw",
         centroid_suffix="_centroid",
         processed_root="outputs/processed_data",
+        load_similarity_seq=False,
     ):
 
         self.name = name
@@ -34,6 +35,7 @@ class Dataset(torch.utils.data.Dataset):
         self.example_pool_type = example_pool_type
         self.centroid_suffix = centroid_suffix
         self.processed_root = processed_root
+        self.load_similarity_seq = load_similarity_seq
         (
             self.trajs,
             self.masks,
@@ -49,6 +51,7 @@ class Dataset(torch.utils.data.Dataset):
             example_pool_type=example_pool_type,
             centroid_suffix=centroid_suffix,
             processed_root=processed_root,
+            load_similarity_seq=load_similarity_seq,
         )
 
         if split == "train":
@@ -105,6 +108,7 @@ def create_dataset(split, cfg):
     example_pool_type = cfg.dataset.get("example_pool_type", "raw")
     centroid_suffix = cfg.dataset.get("centroid_suffix", "_centroid")
     processed_root = cfg.dataset.get("processed_root", "outputs/processed_data")
+    load_similarity_seq = cfg.dataset.get("load_similarity_seq", False)
 
     dataset = Dataset(
         name=cfg.dataset.name,
@@ -117,6 +121,7 @@ def create_dataset(split, cfg):
         example_pool_type=example_pool_type,
         centroid_suffix=centroid_suffix,
         processed_root=processed_root,
+        load_similarity_seq=load_similarity_seq,
     )
 
     return dataset
