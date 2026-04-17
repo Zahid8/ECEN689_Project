@@ -10,6 +10,7 @@ def load_processed_data(
     name,
     example_pool_type="raw",
     centroid_suffix="_centroid",
+    processed_root="outputs/processed_data",
 ):
     if example_pool_type == "centroid":
         if name.endswith(centroid_suffix):
@@ -19,7 +20,7 @@ def load_processed_data(
     else:
         processed_name = name
 
-    save_dir = f"processed_data/{processed_name}"
+    save_dir = f"{processed_root}/{processed_name}"
     # split = "val"
     trajs = torch.load(f"{save_dir}/{split}_trajs.pt")
     masks = torch.load(f"{save_dir}/{split}_masks.pt")

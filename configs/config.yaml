@@ -41,6 +41,7 @@ dataset:
   pool_ratio: 1
   example_pool_type: raw
   centroid_suffix: _centroid
+  processed_root: outputs/processed_data
 
 model:
   num_future: 20
@@ -61,6 +62,6 @@ load_model:
   model_dir: TrajICL
   model_path:
 
-output_dir: results
+output_dir: outputs
 device: cuda
 wandb: True

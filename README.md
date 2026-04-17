@@ -1,20 +1,61 @@
-# TrajICL End-to-End Guide (Raw + Dynamic-Centroid Example Pools)
+<div align="center">
 
-This README is an end-to-end workflow for running TrajICL in this repository with your dataset placed in:
+# TrajICL: End-to-End Guide (Raw + Dynamic-Centroid Example Pools)
+
+**Original paper:** *Towards Predicting Any Human Trajectory In Context (NeurIPS 2025)*  
+**Paper:** https://arxiv.org/abs/2506.00871
+
+</div>
+
+This repository contains the TrajICL training/evaluation pipeline and an extended preprocessing path that builds centroid-based example pools using dynamic clustering.
+
+The instructions below are written for the current local setup where data is stored in:
 
 - `TrajICL/dataset`
 
-It covers:
+---
 
-1. automatic dataset loading from `dataset/`
-2. raw preprocessing pipeline
-3. dynamic-clustering centroid preprocessing pipeline
-4. training with raw or centroid pools
-5. evaluation with raw or centroid pools
+## What TrajICL Does
 
-## 1. Environment Setup
+TrajICL is an in-context trajectory prediction framework that selects supporting examples from a pool and conditions prediction on those examples at inference/training time.
 
-From the repo root:
+Core capabilities from the original codebase:
+
+1. Standard trajectory preprocessing
+2. Similarity-based example retrieval
+3. In-context training and evaluation
+
+---
+
+## What Is Added in This Repo (Beyond Original)
+
+This branch adds production-ready extensions on top of the original pipeline:
+
+1. **Dynamic-clustering centroid preprocessing** (`preprocess_centroids.py`)
+   - Nested clustering: direction -> location
+   - LOF-based reassignment every 10 frames
+   - Temporary pool re-clustering for new cluster formation
+   - Delta-based centroid trajectory updates
+
+2. **Config-driven pool switching**
+   - `dataset.example_pool_type: raw | centroid`
+   - No model-core redesign required
+
+3. **Automatic dataset resolution from `dataset/`**
+   - MOTSynth annotations are discovered automatically
+   - Split fallback (80/20 train/val) when split text files are missing
+
+4. **Unified output routing under `outputs/`**
+   - Processed data, checkpoints, logs, plots/graphs in one root
+
+5. **Automatic full terminal logging**
+   - `stdout` + `stderr` are captured to timestamped log files for all main entry scripts
+
+---
+
+## Environment Setup
+
+From repository root:
 
 ```bash
 cd /home/zahid/Projects/TrajICL
@@ -23,164 +64,211 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 2. Dataset Layout (Automatic Loading)
+---
 
-The code now auto-resolves MOTSynth annotations from these layouts, in order:
+## Dataset Requirements
+
+Expected annotation layout (already present in your setup):
+
+- `dataset/mot_annotations/<scene_id>/gt/gt.txt`
+
+The loader resolves MOTSynth from these locations (in order):
 
 1. `<data_dir>/motsynth/mot_annotations/...`
 2. `<data_dir>/mot_annotations/...`
 3. `dataset/mot_annotations/...` (repo-local fallback)
 
-Since your data is inside `TrajICL/dataset`, you can run preprocessing without extra path arguments.
-
-Required annotation files per scene:
-
-- `dataset/mot_annotations/<scene_id>/gt/gt.txt`
-
-Optional split files (if present, they are used):
+Optional split files (used if present):
 
 - `dataset/motsynth_train.txt`
 - `dataset/motsynth_val.txt`
 
-If split files are missing, the loader auto-builds deterministic splits from available scenes:
+If split files are missing, deterministic split fallback is applied:
 
-- first 80% scenes -> train
-- last 20% scenes -> val
+1. first 80% scenes -> train
+2. last 20% scenes -> val
 
-## 3. Raw Preprocessing (Standard TrajICL Pool)
+---
 
-Run full raw preprocessing (window extraction, fold split, similarity matrix, similar-trajectory dicts):
+## End-to-End Run (Recommended)
+
+Run the full raw + centroid pipeline, then train/evaluate with centroid pool:
+
+```bash
+python preprocess.py --name motsynth --stage all
+python preprocess_centroids.py --name motsynth --stage all
+python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
+python eval.py --dataset_name motsynth --example_pool_type centroid
+```
+
+---
+
+## Preprocessing Workflows
+
+## 1) Raw example-pool preprocessing
 
 ```bash
 python preprocess.py --name motsynth --stage all
 ```
 
-Output directory:
+Output:
 
-- `processed_data/motsynth`
+- `outputs/processed_data/motsynth`
 
-Key artifacts:
-
-- `train_trajs.pt`, `val_trajs.pt`
-- `train_masks.pt`, `val_masks.pt`
-- `*_pool_indices_by_fold.pickle`
-- `*_valid_indices_by_fold.pickle`
-- `*_sim_matrix_dicts.pt`
-- `*_similar_traj_dicts_hist.pickle`
-- `*_similar_traj_dicts_seq.pickle`
-
-## 4. Centroid Preprocessing (Dynamic Clustering, Paper-Grounded)
-
-Run centroid preprocessing end-to-end:
+## 2) Centroid example-pool preprocessing
 
 ```bash
 python preprocess_centroids.py --name motsynth --stage all
 ```
 
-This runs:
+Output:
 
-1. dynamic nested clustering per sequence (`direction -> location`)
-2. LOF-based re-evaluation every 10 frames
-3. outlier reassignment + temporary-pool re-clustering
-4. centroid trajectory generation using delta updates (not per-frame full raw mean)
-5. similarity/preselection artifacts in the same format as raw preprocessing
-
-Paper-default parameters used by default:
-
-- `--distance_thresh_px 120`
-- `--direction_thresh_deg 50`
-- `--lof_contamination 0.2`
-- `--lof_neighbor_ratio 0.8`
-- `--reeval_interval 10`
-- `--temporary_recluster_min_size 10`
-
-Output directory:
-
-- `processed_data/motsynth_centroid`
+- `outputs/processed_data/motsynth_centroid`
 
 Centroid metadata sidecars:
 
-- `train_centroid_metadata.json`
-- `val_centroid_metadata.json`
-- `train_centroid_metadata_by_scene.json`
-- `val_centroid_metadata_by_scene.json`
+1. `train_centroid_metadata.json`
+2. `val_centroid_metadata.json`
+3. `train_centroid_metadata_by_scene.json`
+4. `val_centroid_metadata_by_scene.json`
 
-## 5. Train with Raw Pool
+### Centroid defaults (paper-aligned)
 
-Raw pool is default (`dataset.example_pool_type=raw`):
+```bash
+--direction_thresh_deg 50
+--distance_thresh_px 120
+--lof_contamination 0.2
+--lof_neighbor_ratio 0.8
+--reeval_interval 10
+--temporary_recluster_min_size 10
+```
+
+---
+
+## Training
+
+## Train with raw pool
 
 ```bash
 python train.py -m dataset.name=motsynth dataset.example_pool_type=raw
 ```
 
-## 6. Train with Centroid Pool
-
-Switch only the example pool type:
+## Train with centroid pool
 
 ```bash
 python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
 ```
 
-The dataloader automatically reads from:
+---
 
-- `processed_data/motsynth_centroid`
+## Evaluation
 
-No model-core changes are required.
-
-## 7. Evaluate with Raw or Centroid Pool
-
-Raw pool:
+## Evaluate with raw pool
 
 ```bash
 python eval.py --dataset_name motsynth --example_pool_type raw
 ```
 
-Centroid pool:
+## Evaluate with centroid pool
 
 ```bash
 python eval.py --dataset_name motsynth --example_pool_type centroid
 ```
 
-## 8. One-Pass End-to-End Command Sequence
+---
 
-Run this once from repo root:
+## Output Structure
+
+All artifacts are stored under `outputs/`:
+
+1. `outputs/processed_data/` -> raw/centroid processed datasets
+2. `outputs/TrajICL/<run_name>/` -> checkpoints
+3. `outputs/logs/` -> terminal run logs
+4. `outputs/wandb/` -> wandb local files
+5. `outputs/plots/` -> plots
+6. `outputs/graphs/` -> graphs
+
+---
+
+## Automatic Terminal Logging
+
+The following scripts automatically capture full terminal output (`stdout` + `stderr`) to timestamped log files:
+
+1. `preprocess.py` -> `outputs/logs/preprocess_<timestamp>.log`
+2. `preprocess_centroids.py` -> `outputs/logs/preprocess_centroids_<timestamp>.log`
+3. `train.py` -> `outputs/logs/train_<timestamp>.log`
+4. `eval.py` -> `outputs/logs/eval_<timestamp>.log`
+
+This includes:
+
+1. `print(...)` messages
+2. progress bars
+3. warnings
+4. exceptions and tracebacks
+
+### Optional logging flags
+
+For preprocess/eval scripts:
 
 ```bash
-python preprocess.py --name motsynth --stage all
-python preprocess_centroids.py --name motsynth --stage all
-python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
-python eval.py --dataset_name motsynth --example_pool_type centroid
+--log_dir <path>
+--disable_file_logging
 ```
 
-## 9. Quick Troubleshooting
+Examples:
 
-If preprocessing says it cannot find MOTSynth annotations:
+```bash
+python preprocess.py --name motsynth --stage all --log_dir outputs/logs/custom
+python preprocess_centroids.py --name motsynth --stage all --disable_file_logging
+python eval.py --dataset_name motsynth --example_pool_type centroid --log_dir outputs/logs/custom
+```
 
-1. check `dataset/mot_annotations/<scene_id>/gt/gt.txt` exists
-2. rerun with explicit path:
+---
+
+## Key Config Fields
+
+`configs/config.yaml`
+
+```yaml
+dataset:
+  name: motsynth
+  example_pool_type: raw        # raw | centroid
+  centroid_suffix: _centroid
+  processed_root: outputs/processed_data
+
+output_dir: outputs
+```
+
+---
+
+## Troubleshooting
+
+## Dataset not found
+
+If preprocessing cannot find MOTSynth annotations:
 
 ```bash
 python preprocess.py --name motsynth --stage all --data_dir dataset
 python preprocess_centroids.py --name motsynth --stage all --data_dir dataset
 ```
 
-If centroid training fails due to missing processed files, ensure this exists first:
+## Centroid training cannot load data
 
-- `processed_data/motsynth_centroid/train_trajs.pt`
-- `processed_data/motsynth_centroid/train_similar_traj_dicts_hist.pickle`
+Verify these files exist:
 
-## 10. Config Knobs You Can Use
+1. `outputs/processed_data/motsynth_centroid/train_trajs.pt`
+2. `outputs/processed_data/motsynth_centroid/train_similar_traj_dicts_hist.pickle`
 
-Default config file:
+## Dependencies missing
 
-- `configs/config.yaml`
+If imports fail (for example `omegaconf`), reinstall environment:
 
-Relevant fields:
+```bash
+pip install -r requirements.txt
+```
 
-- `dataset.name: motsynth`
-- `dataset.example_pool_type: raw | centroid`
-- `dataset.centroid_suffix: _centroid`
-- `dataset.prompting: sim | random`
-- `dataset.num_example: <int>`
+---
 
-This is sufficient to run TrajICL end-to-end directly from `TrajICL/dataset` with either raw or centroid example pools.
+## Acknowledgement
+
+This codebase builds on the original TrajICL release and related prior implementations acknowledged by the authors.

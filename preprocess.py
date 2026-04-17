@@ -17,6 +17,7 @@ from utils.data import (
     load_data_jta_all_visual_cues,
     load_motsynth,
 )
+from utils.run_logging import finalize_run_logging, start_run_logging
 
 warnings.simplefilter("ignore")
 
@@ -262,7 +263,7 @@ def save_data(
     filename_list,
     frames_list,
     pedestrians_list,
-    save_root="processed_data",
+    save_root="outputs/processed_data",
 ):
     """
     Save processed dataset under the specified directory.
@@ -294,7 +295,7 @@ def save_data(
 def load_processed_data(
     save_name,
     split,
-    save_root="processed_data",
+    save_root="outputs/processed_data",
     similarity_scope=None,
 ):
     """
@@ -587,7 +588,7 @@ def main():
         help="Dataset name (e.g., motsynth, jrdb, jta)",
     )
     parser.add_argument("--data_dir", type=str, default="data")
-    parser.add_argument("--save_root", type=str, default="processed_data")
+    parser.add_argument("--save_root", type=str, default="outputs/processed_data")
     parser.add_argument(
         "--splits",
         type=str,
@@ -616,106 +617,77 @@ def main():
     parser.add_argument("--no_parallel", action="store_true")
     parser.add_argument("--max_workers", type=int, default=None)
     parser.add_argument("--load_precomputed", action="store_true")
+    parser.add_argument("--log_dir", type=str, default="outputs/logs")
+    parser.add_argument("--disable_file_logging", action="store_true")
 
     args = parser.parse_args()
+    log_state = None
+    if not args.disable_file_logging:
+        log_state, log_path = start_run_logging(
+            log_dir=args.log_dir,
+            script_name="preprocess",
+        )
+        print(f"[run-log] Capturing stdout/stderr to {log_path}")
 
-    splits = [s.strip() for s in args.splits.split(",")]
-    similarity_scopes = [s.strip() for s in args.similarity_scopes.split(",")]
+    try:
+        splits = [s.strip() for s in args.splits.split(",")]
+        similarity_scopes = [s.strip() for s in args.similarity_scopes.split(",")]
 
-    r, stride = infer_r_stride(args.name)
-    save_name = args.name
+        r, stride = infer_r_stride(args.name)
+        save_name = args.name
 
-    # -----------------------------
-    # Stage 1: Data preprocessing
-    # -----------------------------
-    if args.stage in ["preprocess", "all"]:
-        print("===== Stage 1: preprocess (load_data -> pool/valid split -> save) =====")
-        for split in splits:
-            print(f"[Preprocess] name={args.name}, split={split}")
+        # -----------------------------
+        # Stage 1: Data preprocessing
+        # -----------------------------
+        if args.stage in ["preprocess", "all"]:
+            print("===== Stage 1: preprocess (load_data -> pool/valid split -> save) =====")
+            for split in splits:
+                print(f"[Preprocess] name={args.name}, split={split}")
 
-            (
-                trajs,
-                masks,
-                filename_list,
-                frames_list,
-                pedestrians_list,
-                filename2idxs_dict,
-                idx2filename_dict,
-                config,
-            ) = load_data(split, args.name, args.data_dir, r, stride)
-
-            pool_indices_by_fold, valid_indices_by_fold = pool_valid_split(
-                filename_list,
-                frames_list,
-                pedestrians_list,
-                filename2idxs_dict,
-                idx2filename_dict,
-                valid_ratio=args.valid_ratio,
-                min_prompt_num=args.min_prompt_num,
-            )
-
-            save_data(
-                save_name,
-                split,
-                trajs,
-                masks,
-                valid_indices_by_fold,
-                pool_indices_by_fold,
-                filename2idxs_dict,
-                idx2filename_dict,
-                config,
-                filename_list,
-                frames_list,
-                pedestrians_list,
-                save_root=args.save_root,
-            )
-
-    # -----------------------------
-    # Stage 2: Similarity matrix computation
-    # -----------------------------
-    if args.stage in ["sim_matrix", "all"]:
-        print("===== Stage 2: compute sim_matrix =====")
-        for split in splits:
-            print(f"[SimMatrix] save_name={save_name}, split={split}")
-
-            (
-                trajs,
-                masks,
-                filename2idxs_dict,
-                idx2filename_dict,
-                config,
-                filename_list,
-                frames_list,
-                pedestrians_list,
-                valid_indices_by_fold,
-                pool_indices_by_fold,
-                _,
-            ) = load_processed_data(save_name, split, args.save_root)
-
-            save_dir = os.path.join(args.save_root, save_name)
-
-            for similarity_scope in similarity_scopes:
-                print(f"  -> similarity_scope={similarity_scope}")
-                compute_sim_matrix(
+                (
                     trajs,
+                    masks,
+                    filename_list,
+                    frames_list,
+                    pedestrians_list,
                     filename2idxs_dict,
-                    hist_len=args.hist_len,
-                    save_dir=save_dir,
-                    split=split,
-                    load_precomputed=args.load_precomputed,
-                    similarity_scope=similarity_scope,
+                    idx2filename_dict,
+                    config,
+                ) = load_data(split, args.name, args.data_dir, r, stride)
+
+                pool_indices_by_fold, valid_indices_by_fold = pool_valid_split(
+                    filename_list,
+                    frames_list,
+                    pedestrians_list,
+                    filename2idxs_dict,
+                    idx2filename_dict,
+                    valid_ratio=args.valid_ratio,
+                    min_prompt_num=args.min_prompt_num,
                 )
 
-    # -----------------------------
-    # Stage 3: Build similar trajectory dictionaries
-    # -----------------------------
-    if args.stage in ["traj_sim", "all"]:
-        print("===== Stage 3: compute trajectory similarity dicts =====")
-        for split in splits:
-            for similarity_scope in similarity_scopes:
-                print(f"[TrajSim] save_name={save_name}, split={split}, scope={similarity_scope}")
+                save_data(
+                    save_name,
+                    split,
+                    trajs,
+                    masks,
+                    valid_indices_by_fold,
+                    pool_indices_by_fold,
+                    filename2idxs_dict,
+                    idx2filename_dict,
+                    config,
+                    filename_list,
+                    frames_list,
+                    pedestrians_list,
+                    save_root=args.save_root,
+                )
 
-                save_dir = os.path.join(args.save_root, save_name)
+        # -----------------------------
+        # Stage 2: Similarity matrix computation
+        # -----------------------------
+        if args.stage in ["sim_matrix", "all"]:
+            print("===== Stage 2: compute sim_matrix =====")
+            for split in splits:
+                print(f"[SimMatrix] save_name={save_name}, split={split}")
 
                 (
                     trajs,
@@ -728,43 +700,84 @@ def main():
                     pedestrians_list,
                     valid_indices_by_fold,
                     pool_indices_by_fold,
-                    sim_matrix_dicts,
-                ) = load_processed_data(
-                    save_name,
-                    split,
-                    args.save_root,
-                    similarity_scope=similarity_scope,
-                )
+                    _,
+                ) = load_processed_data(save_name, split, args.save_root)
 
-                similar_traj_dicts = []
-                similar_scores_dicts = []
+                save_dir = os.path.join(args.save_root, save_name)
 
-                for i, (valid_indices, pool_indices) in enumerate(
-                    zip(valid_indices_by_fold, pool_indices_by_fold)
-                ):
-                    print(f"  Fold {i}: pool={len(pool_indices)}, valid={len(valid_indices)}")
-
-                    similar_traj_dict, similar_scores_dict = compute_trajectory_similarity(
+                for similarity_scope in similarity_scopes:
+                    print(f"  -> similarity_scope={similarity_scope}")
+                    compute_sim_matrix(
+                        trajs,
                         filename2idxs_dict,
-                        dist_weight=args.dist_weight,
-                        vel_weight=args.vel_weight,
-                        threshold=args.threshold,
-                        max_similar=args.max_similar,
-                        pool_indices=pool_indices,
-                        sim_matrix_dicts=sim_matrix_dicts,
-                        use_parallel=not args.no_parallel,
-                        max_workers=args.max_workers,
+                        hist_len=args.hist_len,
+                        save_dir=save_dir,
+                        split=split,
+                        load_precomputed=args.load_precomputed,
+                        similarity_scope=similarity_scope,
                     )
 
-                    similar_traj_dicts.append(similar_traj_dict)
-                    similar_scores_dicts.append(similar_scores_dict)
+        # -----------------------------
+        # Stage 3: Build similar trajectory dictionaries
+        # -----------------------------
+        if args.stage in ["traj_sim", "all"]:
+            print("===== Stage 3: compute trajectory similarity dicts =====")
+            for split in splits:
+                for similarity_scope in similarity_scopes:
+                    print(f"[TrajSim] save_name={save_name}, split={split}, scope={similarity_scope}")
 
-                out_path = os.path.join(
-                    save_dir,
-                    f"{split}_similar_traj_dicts_{similarity_scope}.pickle",
-                )
-                pickle_dump(similar_traj_dicts, out_path)
-                print(f"  -> saved similar_traj_dicts to {out_path}")
+                    save_dir = os.path.join(args.save_root, save_name)
+
+                    (
+                        trajs,
+                        masks,
+                        filename2idxs_dict,
+                        idx2filename_dict,
+                        config,
+                        filename_list,
+                        frames_list,
+                        pedestrians_list,
+                        valid_indices_by_fold,
+                        pool_indices_by_fold,
+                        sim_matrix_dicts,
+                    ) = load_processed_data(
+                        save_name,
+                        split,
+                        args.save_root,
+                        similarity_scope=similarity_scope,
+                    )
+
+                    similar_traj_dicts = []
+                    similar_scores_dicts = []
+
+                    for i, (valid_indices, pool_indices) in enumerate(
+                        zip(valid_indices_by_fold, pool_indices_by_fold)
+                    ):
+                        print(f"  Fold {i}: pool={len(pool_indices)}, valid={len(valid_indices)}")
+
+                        similar_traj_dict, similar_scores_dict = compute_trajectory_similarity(
+                            filename2idxs_dict,
+                            dist_weight=args.dist_weight,
+                            vel_weight=args.vel_weight,
+                            threshold=args.threshold,
+                            max_similar=args.max_similar,
+                            pool_indices=pool_indices,
+                            sim_matrix_dicts=sim_matrix_dicts,
+                            use_parallel=not args.no_parallel,
+                            max_workers=args.max_workers,
+                        )
+
+                        similar_traj_dicts.append(similar_traj_dict)
+                        similar_scores_dicts.append(similar_scores_dict)
+
+                    out_path = os.path.join(
+                        save_dir,
+                        f"{split}_similar_traj_dicts_{similarity_scope}.pickle",
+                    )
+                    pickle_dump(similar_traj_dicts, out_path)
+                    print(f"  -> saved similar_traj_dicts to {out_path}")
+    finally:
+        finalize_run_logging(log_state)
 
 
 if __name__ == "__main__":

@@ -438,12 +438,17 @@ def setup_wandb_logging(cfg):
         output_dir: Directory for saving outputs.
     """
     config_dict = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    os.makedirs(cfg.output_dir, exist_ok=True)
+    for subdir in ["logs", "plots", "graphs", "wandb"]:
+        os.makedirs(os.path.join(cfg.output_dir, subdir), exist_ok=True)
+
     if cfg.wandb:
         import wandb
 
         wandb.init(
             config=config_dict,
             project=cfg.training.project,
+            dir=os.path.join(cfg.output_dir, "wandb"),
         )
         project_name = wandb.run.project
         run_name = wandb.run.name
