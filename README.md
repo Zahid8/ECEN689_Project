@@ -366,6 +366,79 @@ pip install -r requirements.txt
 ```
 
 ---
+# Quick Run Checklist
+
+## 0. Optional: Activate your environment
+
+```bash
+source .venv/bin/activate
+```
+
+## 1. Ensure raw and centroid processed pools exist
+
+```bash
+python preprocess.py --name motsynth --stage all
+python preprocess_centroids.py --name motsynth --stage all
+```
+
+## 2. Train the baseline model (original / raw pool)
+
+```bash
+python train.py -m dataset.name=motsynth dataset.example_pool_type=raw
+```
+
+After training, note the checkpoint path:
+
+```text
+outputs/TrajICL/<raw_run_name>/best_val_checkpoint.pth.tar
+```
+
+## 3. Train the centroid-integrated model
+
+```bash
+python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
+```
+
+After training, note the checkpoint path:
+
+```text
+outputs/TrajICL/<centroid_run_name>/best_val_checkpoint.pth.tar
+```
+
+## 4. Benchmark A: Compare raw vs centroid pools using the same checkpoint
+
+```bash
+python compare_raw_vs_centroid.py \
+  --model_path outputs/TrajICL/<centroid_run_name>/best_val_checkpoint.pth.tar \
+  --dataset_name motsynth \
+  --prompting_method sim \
+  --device cuda
+```
+
+## 5. Benchmark B: Compare baseline checkpoint vs centroid checkpoint
+
+This generates a full comparison report.
+
+```bash
+python compare_checkpoints.py \
+  --baseline_model_path outputs/TrajICL/<raw_run_name>/best_val_checkpoint.pth.tar \
+  --candidate_model_path outputs/TrajICL/<centroid_run_name>/best_val_checkpoint.pth.tar \
+  --baseline_label original_trained \
+  --prompting_method sim \
+  --pools raw,centroid \
+  --shots 0,2,4,8 \
+  --device cuda
+```
+
+## Output locations
+
+Results and logs are saved under:
+
+- `outputs/comparison/`
+- `outputs/plots/`
+- `outputs/graphs/`
+- `outputs/logs/`
+
 
 ## Acknowledgement
 
