@@ -185,13 +185,15 @@ Prerequisites:
 
 1. raw processed pool exists: `outputs/processed_data/motsynth`
 2. centroid processed pool exists: `outputs/processed_data/motsynth_centroid`
-3. trained checkpoint exists: `outputs/TrajICL/<run_name>/best_val_checkpoint.pth.tar`
+3. trained checkpoint exists (for example):
+   1. `outputs/TrajICL/raw/best_val_checkpoint.pth.tar`
+   2. `outputs/TrajICL/centroid/best_val_checkpoint.pth.tar`
 
 Run:
 
 ```bash
 python compare_raw_vs_centroid.py \
-  --model_path outputs/TrajICL/<run_name>/best_val_checkpoint.pth.tar \
+  --model_path outputs/TrajICL/centroid/best_val_checkpoint.pth.tar \
   --dataset_name motsynth \
   --prompting_method sim \
   --device cuda
@@ -228,8 +230,8 @@ Run:
 
 ```bash
 python compare_checkpoints.py \
-  --baseline_model_path outputs/TrajICL/<original_run>/best_val_checkpoint.pth.tar \
-  --candidate_model_path outputs/TrajICL/<centroid_run>/best_val_checkpoint.pth.tar \
+  --baseline_model_path outputs/TrajICL/raw/best_val_checkpoint.pth.tar \
+  --candidate_model_path outputs/TrajICL/centroid/best_val_checkpoint.pth.tar \
   --baseline_label original_trained \
   --candidate_label centroid_trained \
   --dataset_name motsynth \
@@ -262,7 +264,7 @@ Terminal log:
 All artifacts are stored under `outputs/`:
 
 1. `outputs/processed_data/` -> raw/centroid processed datasets
-2. `outputs/TrajICL/<run_name>/` -> checkpoints
+2. `outputs/TrajICL/raw/` and `outputs/TrajICL/centroid/` -> checkpoints
 3. `outputs/logs/` -> terminal run logs
 4. `outputs/wandb/` -> wandb local files
 5. `outputs/plots/` -> plots
@@ -414,7 +416,7 @@ python train.py -m dataset.name=motsynth dataset.example_pool_type=raw
 After training, note the checkpoint path:
 
 ```text
-outputs/TrajICL/<raw_run_name>/best_val_checkpoint.pth.tar
+outputs/TrajICL/raw/best_val_checkpoint.pth.tar
 ```
 
 ## 3. Train the centroid-integrated model
@@ -426,14 +428,14 @@ python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
 After training, note the checkpoint path:
 
 ```text
-outputs/TrajICL/<centroid_run_name>/best_val_checkpoint.pth.tar
+outputs/TrajICL/centroid/best_val_checkpoint.pth.tar
 ```
 
 ## 4. Benchmark A: Compare raw vs centroid pools using the same checkpoint
 
 ```bash
 python compare_raw_vs_centroid.py \
-  --model_path outputs/TrajICL/<centroid_run_name>/best_val_checkpoint.pth.tar \
+  --model_path outputs/TrajICL/centroid/best_val_checkpoint.pth.tar \
   --dataset_name motsynth \
   --prompting_method sim \
   --device cuda
@@ -445,8 +447,8 @@ This generates a full comparison report.
 
 ```bash
 python compare_checkpoints.py \
-  --baseline_model_path outputs/TrajICL/<raw_run_name>/best_val_checkpoint.pth.tar \
-  --candidate_model_path outputs/TrajICL/<centroid_run_name>/best_val_checkpoint.pth.tar \
+  --baseline_model_path outputs/TrajICL/raw/best_val_checkpoint.pth.tar \
+  --candidate_model_path outputs/TrajICL/centroid/best_val_checkpoint.pth.tar \
   --baseline_label original_trained \
   --prompting_method sim \
   --pools raw,centroid \

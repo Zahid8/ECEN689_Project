@@ -369,12 +369,16 @@ Defaults changed to route artifacts under outputs:
 4. sets `dataset.load_similarity_seq: False` by default for memory stability
 
 2. `eval.py`
-1. default model path changed to `outputs/TrajICL/...`
+1. default model path changed to `outputs/TrajICL/raw/best_val_checkpoint.pth.tar`
 2. supports `--example_pool_type`
 
 3. `utils/utils.py` (`setup_wandb_logging`)
 1. ensures output subdirs exist (`logs`, `plots`, `graphs`, `wandb`)
 2. sets wandb local dir to `outputs/wandb`
+3. routes checkpoints by pool type to deterministic directories:
+   1. raw -> `outputs/TrajICL/raw/`
+   2. centroid -> `outputs/TrajICL/centroid/`
+4. `save_checkpoint` now writes checkpoints regardless of `wandb` mode, so disabling wandb does not disable checkpoint saving
 
 ---
 
@@ -446,7 +450,7 @@ Auto starts and finalizes logging in `main`.
 ## 7.3 Logs and run artifacts
 
 1. terminal logs -> `outputs/logs/*.log`
-2. checkpoints -> `outputs/TrajICL/<run_name>/`
+2. checkpoints -> `outputs/TrajICL/raw/` and `outputs/TrajICL/centroid/`
 3. wandb local files -> `outputs/wandb/`
 4. processed datasets -> `outputs/processed_data/`
 5. benchmark reports -> `outputs/comparison/`
@@ -576,6 +580,8 @@ Single root for all artifacts simplifies reproducibility and cleanup.
 ### `utils/utils.py`
 
 1. `setup_wandb_logging` now creates `outputs` subdirs and routes wandb local files into `outputs/wandb`
+2. checkpoint output directory is deterministic by pool type (`raw` / `centroid`)
+3. checkpoint persistence is no longer gated on `cfg.wandb`
 
 ### `compare_raw_vs_centroid.py`
 

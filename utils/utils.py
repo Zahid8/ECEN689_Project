@@ -442,21 +442,21 @@ def setup_wandb_logging(cfg):
     for subdir in ["logs", "plots", "graphs", "wandb"]:
         os.makedirs(os.path.join(cfg.output_dir, subdir), exist_ok=True)
 
+    project_name = cfg.training.project
+    pool_type = str(cfg.dataset.get("example_pool_type", "raw"))
+    output_dir = os.path.join(cfg.output_dir, project_name, pool_type)
+    os.makedirs(output_dir, exist_ok=True)
+
     if cfg.wandb:
         import wandb
 
         wandb.init(
             config=config_dict,
-            project=cfg.training.project,
+            project=project_name,
             dir=os.path.join(cfg.output_dir, "wandb"),
         )
-        project_name = wandb.run.project
-        run_name = wandb.run.name
-        output_dir = os.path.join(cfg.output_dir, project_name, run_name)
-        os.makedirs(output_dir, exist_ok=True)
     else:
         wandb = None
-        output_dir = None
 
     return wandb, output_dir
 
@@ -470,17 +470,20 @@ def save_checkpoint(
     output_dir,
     filename="last_epoch_checkpoint.pth.tar",
 ):
-    if cfg.wandb:
-        ckpt = {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "epoch": epoch,
-            "cfg": cfg,
-        }
-        if scheduler is not None:
-            ckpt["scheduler"] = scheduler.state_dict()
+    if output_dir is None:
+        return
 
-        torch.save(ckpt, os.path.join(output_dir, filename))
+    ckpt = {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "epoch": epoch,
+        "cfg": cfg,
+    }
+    if scheduler is not None:
+        ckpt["scheduler"] = scheduler.state_dict()
+
+    os.makedirs(output_dir, exist_ok=True)
+    torch.save(ckpt, os.path.join(output_dir, filename))
 
 
 def logging_wandb(cfg, model, optimizer, scheduler, epoch, stats, output_dir, wandb):

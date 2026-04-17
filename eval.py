@@ -24,7 +24,7 @@ def parse_args():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="outputs/TrajICL/worthy-firebrand-50/best_val_checkpoint.pth.tar",
+        default="outputs/TrajICL/raw/best_val_checkpoint.pth.tar",
         help="Path to the model checkpoint file.",
     )
     parser.add_argument(
