@@ -9,6 +9,7 @@ This document is a full technical implementation record for the work added to th
 5. Full terminal stdout/stderr run logging
 6. Automated raw-vs-centroid benchmarking with metrics/CSV/plots
 7. Automated checkpoint-vs-checkpoint benchmarking (baseline vs candidate)
+8. Comprehensive raw-vs-centroid visualization package generation for slides (`viz.py`)
 
 ---
 
@@ -31,7 +32,8 @@ The centroid path is implemented in `preprocess_centroids.py` and integrated suc
 2. `utils/run_logging.py`
 3. `compare_raw_vs_centroid.py`
 4. `compare_checkpoints.py`
-5. `info.md` (this document)
+5. `viz.py`
+6. `info.md` (this document)
 
 ### Modified files
 
@@ -620,6 +622,26 @@ Single root for all artifacts simplifies reproducibility and cleanup.
 7. copies plots to `outputs/plots/` and `outputs/graphs/`
 8. supports automatic terminal logging to `outputs/logs/compare_checkpoints_<timestamp>.log`
 
+### `viz.py`
+
+1. loads raw and centroid split datasets (`train` or `val`) in TrajICL tensor format
+2. selects at least `--num_samples` per pool (default 10) for sample visual panels
+3. generates sample-level visuals:
+   1. raw multi-agent sample grid
+   2. centroid multi-agent sample grid
+   3. raw-vs-centroid side-by-side sample pairs
+4. generates dataset-level visuals:
+   1. raw spatial occupancy heatmap
+   2. centroid spatial occupancy heatmap
+   3. agent count histogram/boxplot comparisons
+   4. primary speed/displacement/heading distributions
+   5. mean primary speed over timestep curve
+5. saves summary statistics to JSON (`summary_stats.json`)
+6. compiles all generated PNGs into a multi-page PDF report
+7. writes outputs to `outputs/visualizations/raw_vs_centroid_<timestamp>/`
+8. supports automatic run logging to `outputs/logs/viz_<timestamp>.log`
+9. lazy-loads matplotlib so `--help` works even when plotting dependencies are not installed
+
 ---
 
 ## 11) Benchmark Script Details (`compare_raw_vs_centroid.py`)
@@ -740,6 +762,7 @@ Automatic run log:
    1. `dataset.load_similarity_seq=false`
    2. `training.num_workers=0`
    3. lower `training.batch_size`
+5. `viz.py` requires matplotlib at execution time; install with `pip install matplotlib` if missing.
 
 ---
 
@@ -748,7 +771,7 @@ Automatic run log:
 ```bash
 python -m py_compile \
   utils/run_logging.py utils/data.py load_data.py dataset.py \
-  compare_raw_vs_centroid.py compare_checkpoints.py \
+  compare_raw_vs_centroid.py compare_checkpoints.py viz.py \
   preprocess.py preprocess_centroids.py train.py eval.py
 
 python preprocess.py --help
@@ -756,6 +779,7 @@ python preprocess_centroids.py --help
 python eval.py --help
 python compare_raw_vs_centroid.py --help
 python compare_checkpoints.py --help
+python viz.py --help
 
 ls -1t outputs/logs | head
 ```

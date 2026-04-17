@@ -259,6 +259,45 @@ Terminal log:
 
 ---
 
+## Visualization Script for Slides (`viz.py`)
+
+Use `viz.py` to generate a presentation-ready raw-vs-centroid visualization package.
+
+It includes:
+
+1. raw sample trajectory grids (at least 10 samples by default)
+2. centroid sample trajectory grids (at least 10 samples by default)
+3. raw vs centroid side-by-side sample panels
+4. spatial occupancy heatmaps
+5. agent-count distributions and boxplots
+6. primary speed/displacement/heading distributions
+7. mean primary speed curves over time
+8. a combined multi-page PDF report
+9. summary JSON stats
+
+Run:
+
+```bash
+python viz.py \
+  --raw_dir outputs/processed_data/motsynth \
+  --centroid_dir outputs/processed_data/motsynth_centroid \
+  --split train \
+  --num_samples 10
+```
+
+Outputs:
+
+1. `outputs/visualizations/raw_vs_centroid_<timestamp>/` (all PNGs + PDF + summary JSON)
+2. `outputs/logs/viz_<timestamp>.log` (terminal capture)
+
+If matplotlib is missing:
+
+```bash
+pip install matplotlib
+```
+
+---
+
 ## Output Structure
 
 All artifacts are stored under `outputs/`:
@@ -270,6 +309,7 @@ All artifacts are stored under `outputs/`:
 5. `outputs/plots/` -> plots
 6. `outputs/graphs/` -> graphs
 7. `outputs/comparison/` -> raw-vs-centroid benchmark reports
+8. `outputs/visualizations/` -> raw-vs-centroid visual reports
 
 ---
 
