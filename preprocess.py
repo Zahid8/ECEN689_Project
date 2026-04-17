@@ -424,10 +424,16 @@ def process_file_optimized(args):
     """
     Optimized file processing function for parallel execution.
     """
-    (filename, idxs, sim_matrix_dicts, dist_weight, vel_weight, threshold, max_similar) = args
-
-    dist_matrix = sim_matrix_dicts["dist"][filename]
-    vel_matrix = sim_matrix_dicts["vel"][filename]
+    (
+        filename,
+        idxs,
+        dist_matrix,
+        vel_matrix,
+        dist_weight,
+        vel_weight,
+        threshold,
+        max_similar,
+    ) = args
 
     combined_similarity = dist_weight * dist_matrix + vel_weight * vel_matrix
 
@@ -517,7 +523,16 @@ def compute_trajectory_similarity(
 
     if use_parallel and len(filename2idxs_dict) > 1:
         args_list = [
-            (filename, idxs, sim_matrix_dicts, dist_weight, vel_weight, threshold, max_similar)
+            (
+                filename,
+                idxs,
+                sim_matrix_dicts["dist"][filename],
+                sim_matrix_dicts["vel"][filename],
+                dist_weight,
+                vel_weight,
+                threshold,
+                max_similar,
+            )
             for filename, idxs in filename2idxs_dict.items()
         ]
 
@@ -530,7 +545,16 @@ def compute_trajectory_similarity(
                 similar_scores.update(result_scores)
     else:
         for filename, idxs in tqdm(filename2idxs_dict.items(), desc="Processing files"):
-            args = (filename, idxs, sim_matrix_dicts, dist_weight, vel_weight, threshold, max_similar)
+            args = (
+                filename,
+                idxs,
+                sim_matrix_dicts["dist"][filename],
+                sim_matrix_dicts["vel"][filename],
+                dist_weight,
+                vel_weight,
+                threshold,
+                max_similar,
+            )
             result_sim, result_scores = process_file_optimized(args)
             similar_trajs.update(result_sim)
             similar_scores.update(result_scores)
