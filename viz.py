@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import os
+import pickle
 import random
 from datetime import datetime
 from typing import Dict, List, Tuple
@@ -72,6 +73,62 @@ def load_split(directory: str, split: str):
     return trajs, masks
 
 
+def _load_pickle(path: str):
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def load_centroid_match_data(centroid_dir: str, split: str):
+    metadata_path = os.path.join(centroid_dir, f"{split}_centroid_metadata.json")
+    ped_list_path = os.path.join(centroid_dir, f"{split}_pedestrians_list.pickle")
+    if not os.path.isfile(metadata_path) or not os.path.isfile(ped_list_path):
+        return None, None
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+    ped_list = _load_pickle(ped_list_path)
+    return metadata, ped_list
+
+
+def build_matched_sample_pairs(
+    raw_total: int,
+    cen_total: int,
+    centroid_ped_list,
+    centroid_metadata,
+    num_samples: int,
+    seed: int,
+):
+    if centroid_ped_list is None or centroid_metadata is None:
+        return None, None
+
+    grouped_by_raw: Dict[int, List[int]] = {}
+    limit = min(cen_total, len(centroid_ped_list))
+    for cen_idx in range(limit):
+        centroid_track_id = str(centroid_ped_list[cen_idx])
+        meta = centroid_metadata.get(centroid_track_id)
+        if not isinstance(meta, dict):
+            continue
+        raw_idx = meta.get("source_sample_index")
+        if isinstance(raw_idx, (int, np.integer)):
+            raw_idx = int(raw_idx)
+            if 0 <= raw_idx < raw_total:
+                grouped_by_raw.setdefault(raw_idx, []).append(cen_idx)
+
+    if not grouped_by_raw:
+        return None, None
+
+    rng = random.Random(seed)
+    raw_candidates = list(grouped_by_raw.keys())
+    rng.shuffle(raw_candidates)
+    chosen_raw = sorted(raw_candidates[: min(num_samples, len(raw_candidates))])
+
+    chosen_cen = []
+    for raw_idx in chosen_raw:
+        candidates = grouped_by_raw[raw_idx]
+        chosen_cen.append(candidates[rng.randrange(len(candidates))])
+
+    return chosen_raw, chosen_cen
+
+
 def sample_indices(total: int, num_samples: int, seed: int) -> List[int]:
     rng = random.Random(seed)
     num = min(num_samples, total)
@@ -91,6 +148,46 @@ def _safe_primary_points(xy: np.ndarray, mask: np.ndarray) -> np.ndarray:
         return np.zeros((0, 2), dtype=np.float32)
     primary_mask = mask[0]
     return xy[0][primary_mask]
+
+
+def normalize_xy_by_primary_origin(xy: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    norm_xy = xy.copy()
+    if norm_xy.shape[0] == 0:
+        return norm_xy
+    primary_valid = np.flatnonzero(mask[0])
+    if len(primary_valid) == 0:
+        return norm_xy
+    origin = norm_xy[0, primary_valid[0]].copy()
+    norm_xy[mask] = norm_xy[mask] - origin
+    return norm_xy
+
+
+def compute_axis_limits_for_sets(
+    xy_mask_sets: List[Tuple[np.ndarray, np.ndarray]],
+    min_span: float = 20.0,
+    pad_ratio: float = 0.08,
+):
+    all_pts = []
+    for xy, mask in xy_mask_sets:
+        pts = xy[mask]
+        if len(pts) > 0:
+            all_pts.append(pts)
+
+    if not all_pts:
+        return None, None
+
+    pts = np.concatenate(all_pts, axis=0)
+    mins = pts.min(axis=0)
+    maxs = pts.max(axis=0)
+
+    x_span = max(float(maxs[0] - mins[0]), min_span)
+    y_span = max(float(maxs[1] - mins[1]), min_span)
+    x_center = float((maxs[0] + mins[0]) * 0.5)
+    y_center = float((maxs[1] + mins[1]) * 0.5)
+    x_half = x_span * (0.5 + pad_ratio)
+    y_half = y_span * (0.5 + pad_ratio)
+
+    return (x_center - x_half, x_center + x_half), (y_center - y_half, y_center + y_half)
 
 
 def compute_stats(
@@ -260,9 +357,13 @@ def make_side_by_side_pairs(
     hist_len,
     max_agents,
     out_path,
+    normalize_origin=True,
+    share_axes=True,
 ):
     plt, _ = _prepare_matplotlib()
     n = min(len(raw_idxs), len(cen_idxs))
+    if n == 0:
+        raise ValueError("No sample pairs available for side-by-side plotting.")
     fig, axes = plt.subplots(n, 2, figsize=(12, 3.2 * n))
     if n == 1:
         axes = np.array([axes])
@@ -270,6 +371,9 @@ def make_side_by_side_pairs(
     for i in range(n):
         raw_xy, raw_mask = to_xy_mask(raw_trajs[raw_idxs[i]], raw_masks[raw_idxs[i]])
         cen_xy, cen_mask = to_xy_mask(cen_trajs[cen_idxs[i]], cen_masks[cen_idxs[i]])
+        if normalize_origin:
+            raw_xy = normalize_xy_by_primary_origin(raw_xy, raw_mask)
+            cen_xy = normalize_xy_by_primary_origin(cen_xy, cen_mask)
 
         _plot_agent_trajectories(
             axes[i, 0],
@@ -287,6 +391,13 @@ def make_side_by_side_pairs(
             max_agents,
             title=f"CENTROID idx={cen_idxs[i]} | agents={cen_xy.shape[0]}",
         )
+        if share_axes:
+            xlim, ylim = compute_axis_limits_for_sets([(raw_xy, raw_mask), (cen_xy, cen_mask)])
+            if xlim is not None and ylim is not None:
+                axes[i, 0].set_xlim(*xlim)
+                axes[i, 0].set_ylim(*ylim)
+                axes[i, 1].set_xlim(*xlim)
+                axes[i, 1].set_ylim(*ylim)
 
     fig.suptitle("Raw vs Centroid: Sample-wise Side-by-Side", fontsize=14)
     fig.tight_layout(rect=[0, 0.02, 1, 0.97])
@@ -304,6 +415,8 @@ def make_before_after_figure(
     hist_len,
     max_agents,
     out_path,
+    normalize_origin=True,
+    share_axes=True,
 ):
     plt, _ = _prepare_matplotlib()
 
@@ -311,6 +424,9 @@ def make_before_after_figure(
 
     raw_xy, raw_mask = to_xy_mask(raw_trajs[raw_idx], raw_masks[raw_idx])
     cen_xy, cen_mask = to_xy_mask(cen_trajs[cen_idx], cen_masks[cen_idx])
+    if normalize_origin:
+        raw_xy = normalize_xy_by_primary_origin(raw_xy, raw_mask)
+        cen_xy = normalize_xy_by_primary_origin(cen_xy, cen_mask)
 
     _plot_agent_trajectories(
         axes[0],
@@ -328,11 +444,19 @@ def make_before_after_figure(
         max_agents,
         title=f"After (CENTROID) | idx={cen_idx} | agents={cen_xy.shape[0]}",
     )
+    if share_axes:
+        xlim, ylim = compute_axis_limits_for_sets([(raw_xy, raw_mask), (cen_xy, cen_mask)])
+        if xlim is not None and ylim is not None:
+            axes[0].set_xlim(*xlim)
+            axes[0].set_ylim(*ylim)
+            axes[1].set_xlim(*xlim)
+            axes[1].set_ylim(*ylim)
 
     legend_text = (
         "Blue: primary track\n"
         "Orange: context tracks\n"
-        "Solid: history, Dashed: future"
+        "Solid: history, Dashed: future\n"
+        "Paired plots: origin-normalized + shared axes"
     )
     fig.text(
         0.5,
@@ -473,9 +597,29 @@ def main():
 
         print(f"Raw split samples: {len(raw_trajs)}")
         print(f"Centroid split samples: {len(cen_trajs)}")
+        if len(raw_trajs) == 0 or len(cen_trajs) == 0:
+            raise RuntimeError("Cannot visualize empty split: raw or centroid sample count is zero.")
 
         raw_sample_idxs = sample_indices(len(raw_trajs), args.num_samples, args.seed)
         cen_sample_idxs = sample_indices(len(cen_trajs), args.num_samples, args.seed + 13)
+        centroid_metadata, centroid_ped_list = load_centroid_match_data(args.centroid_dir, args.split)
+        matched_raw_idxs, matched_cen_idxs = build_matched_sample_pairs(
+            raw_total=len(raw_trajs),
+            cen_total=len(cen_trajs),
+            centroid_ped_list=centroid_ped_list,
+            centroid_metadata=centroid_metadata,
+            num_samples=args.num_samples,
+            seed=args.seed + 777,
+        )
+        if matched_raw_idxs and matched_cen_idxs:
+            pair_raw_idxs, pair_cen_idxs = matched_raw_idxs, matched_cen_idxs
+            print(
+                f"Using metadata-matched pairs: {len(pair_raw_idxs)} "
+                "(centroid -> source_sample_index)"
+            )
+        else:
+            pair_raw_idxs, pair_cen_idxs = raw_sample_idxs, cen_sample_idxs
+            print("Metadata matching unavailable; using independent random samples for pair plots.")
 
         # Cap stats sample count for speed/memory
         raw_stats_idxs = sample_indices(len(raw_trajs), min(args.stats_max_samples, len(raw_trajs)), args.seed + 101)
@@ -506,13 +650,15 @@ def main():
         make_before_after_figure(
             raw_trajs,
             raw_masks,
-            raw_sample_idxs[0],
+            pair_raw_idxs[0],
             cen_trajs,
             cen_masks,
-            cen_sample_idxs[0],
+            pair_cen_idxs[0],
             args.hist_len,
             args.max_agents_per_plot,
             before_after,
+            normalize_origin=True,
+            share_axes=True,
         )
         make_samples_grid(
             raw_trajs,
@@ -535,13 +681,15 @@ def main():
         make_side_by_side_pairs(
             raw_trajs,
             raw_masks,
-            raw_sample_idxs,
+            pair_raw_idxs,
             cen_trajs,
             cen_masks,
-            cen_sample_idxs,
+            pair_cen_idxs,
             args.hist_len,
             args.max_agents_per_plot,
             pair_grid,
+            normalize_origin=True,
+            share_axes=True,
         )
 
         print("Generating global distribution and heatmap comparisons...")
@@ -644,6 +792,8 @@ def main():
         print(f"Summary stats: {summary_json}")
         print(f"Raw sample indices: {raw_sample_idxs}")
         print(f"Centroid sample indices: {cen_sample_idxs}")
+        print(f"Pair raw indices: {pair_raw_idxs}")
+        print(f"Pair centroid indices: {pair_cen_idxs}")
 
     finally:
         finalize_run_logging(log_state)

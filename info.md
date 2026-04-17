@@ -626,21 +626,25 @@ Single root for all artifacts simplifies reproducibility and cleanup.
 
 1. loads raw and centroid split datasets (`train` or `val`) in TrajICL tensor format
 2. selects at least `--num_samples` per pool (default 10) for sample visual panels
-3. generates sample-level visuals:
+3. loads centroid metadata (`<split>_centroid_metadata.json`) + centroid primary-id list (`<split>_pedestrians_list.pickle`) and builds metadata-matched raw-vs-centroid sample pairs using `source_sample_index`
+4. generates sample-level visuals:
    1. raw multi-agent sample grid
    2. centroid multi-agent sample grid
-   3. raw-vs-centroid side-by-side sample pairs
-4. generates dataset-level visuals:
+   3. raw-vs-centroid side-by-side sample pairs (matched by source sample where metadata exists)
+5. paired comparison figures (`00_before_vs_after...`, `03_raw_vs_centroid_pairs...`) apply:
+   1. origin normalization (primary track starts at `(0,0)` in each panel)
+   2. shared axis limits across raw and centroid panel in the same pair
+6. generates dataset-level visuals:
    1. raw spatial occupancy heatmap
    2. centroid spatial occupancy heatmap
    3. agent count histogram/boxplot comparisons
    4. primary speed/displacement/heading distributions
    5. mean primary speed over timestep curve
-5. saves summary statistics to JSON (`summary_stats.json`)
-6. compiles all generated PNGs into a multi-page PDF report
-7. writes outputs to `outputs/visualizations/raw_vs_centroid_<timestamp>/`
-8. supports automatic run logging to `outputs/logs/viz_<timestamp>.log`
-9. lazy-loads matplotlib so `--help` works even when plotting dependencies are not installed
+7. saves summary statistics to JSON (`summary_stats.json`)
+8. compiles all generated PNGs into a multi-page PDF report
+9. writes outputs to `outputs/visualizations/raw_vs_centroid_<timestamp>/`
+10. supports automatic run logging to `outputs/logs/viz_<timestamp>.log`
+11. lazy-loads matplotlib so `--help` works even when plotting dependencies are not installed
 
 ---
 
@@ -664,6 +668,11 @@ Important nuance:
 
 1. In `01_raw_samples_grid.png`, blue is a real pedestrian trajectory.
 2. In `02_centroid_samples_grid.png`, blue is a centroid (cluster-representative) trajectory.
+3. `01` and `02` are independent grids; they are not one-to-one matched pairs.
+4. For one-to-one comparisons, use:
+   1. `00_before_vs_after_raw_vs_centroid.png`
+   2. `03_raw_vs_centroid_pairs.png`
+5. `00` and `03` are generated from metadata-matched samples and plotted with shared axis limits after origin normalization; this avoids misleading visual scale offsets between raw and centroid panels.
 
 ### Interpreting raw vs centroid summary stats
 

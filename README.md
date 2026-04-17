@@ -110,6 +110,16 @@ python viz.py \
 Artifacts are saved under:
 - `outputs/visualizations/raw_vs_centroid_<timestamp>/`
 
+Figure interpretation:
+- `00_before_vs_after_raw_vs_centroid.png` and `03_raw_vs_centroid_pairs.png` are now metadata-matched (`centroid_metadata[*].source_sample_index`) so raw and centroid panels come from the same source sample.
+- These paired figures are origin-normalized (primary trajectory starts at `(0,0)`) and use shared axis limits across both panels for fair shape comparison.
+- `01_raw_samples_grid.png` and `02_centroid_samples_grid.png` are independent sample grids for each representation (not one-to-one pairs).
+- Color semantics in all trajectory panels:
+  - blue = primary trajectory
+  - orange = context trajectories
+  - solid = history
+  - dashed = future
+
 ## Output Layout
 - `outputs/processed_data/` -> raw/centroid processed datasets
 - `outputs/TrajICL/raw/` -> raw-model checkpoints
