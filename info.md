@@ -644,6 +644,63 @@ Single root for all artifacts simplifies reproducibility and cleanup.
 
 ---
 
+## 10) Visualization Interpretation Notes (`viz.py` outputs)
+
+The first sample-grid images are often the most discussed in presentations:
+
+1. `01_raw_samples_grid.png`
+2. `02_centroid_samples_grid.png`
+
+Color/style semantics in both:
+
+1. blue trajectory = primary target track (index 0 in the sample tensor)
+2. orange trajectories = other context tracks in the same sample
+3. solid line segment = history (observed part, first `hist_len` frames)
+4. dashed line segment = future segment
+5. dot marker = start point
+6. `x` marker = end point
+
+Important nuance:
+
+1. In `01_raw_samples_grid.png`, blue is a real pedestrian trajectory.
+2. In `02_centroid_samples_grid.png`, blue is a centroid (cluster-representative) trajectory.
+
+### Interpreting raw vs centroid summary stats
+
+An observed pattern like this is expected in part:
+
+```json
+\"raw\": {
+  \"agent_count_mean\": 8.8012,
+  \"agent_count_median\": 7.0,
+  \"primary_speed_mean\": 19.48,
+  \"primary_displacement_mean\": 272.08
+},
+\"centroid\": {
+  \"agent_count_mean\": 4.0398,
+  \"agent_count_median\": 4.0,
+  \"primary_speed_mean\": 0.97,
+  \"primary_displacement_mean\": 18.39
+}
+```
+
+Interpretation:
+
+1. Lower centroid `agent_count_mean` is expected because multiple pedestrians are replaced by fewer cluster-representative tracks.
+2. Very low centroid `primary_speed_mean` / `primary_displacement_mean` is strongly influenced by centroid update semantics in this implementation:
+   1. centroid positions are updated every `centroid_update_interval` frames (default 10)
+   2. between update frames, centroid positions are held constant
+   3. naive per-frame speed/displacement statistics therefore include many near-zero deltas
+
+So these raw-vs-centroid speed/displacement values are **not strictly apples-to-apples** without normalization for centroid update interval and effective update frames.
+
+Recommended slide note:
+
+1. treat agent-count reduction as the direct structural effect of clustering
+2. treat speed/displacement comparisons as representation-dependent unless re-normalized
+
+---
+
 ## 11) Benchmark Script Details (`compare_raw_vs_centroid.py`)
 
 Purpose: reproducible side-by-side benchmark package for raw vs centroid pool performance.
