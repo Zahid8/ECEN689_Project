@@ -352,6 +352,10 @@ Defaults changed to route artifacts under outputs:
 3. Stage-3 similarity worker argument passing was optimized so each worker receives
    only per-file matrices (`dist_matrix`, `vel_matrix`) instead of the entire
    similarity dictionary, eliminating multi-GB per-task IPC overhead.
+4. Stage-3 worker runtime stabilization was added:
+   1. ProcessPool worker initializer sets single-thread settings (`OMP/MKL/OPENBLAS/NUMEXPR`)
+   2. Torch worker threads are set to 1 (`set_num_threads`, `set_num_interop_threads`)
+   3. default parallel worker cap for similarity stage is now conservative (`min(8, cpu_count, num_files)`)
 
 ## 5.5 Train/eval/output configuration
 
@@ -553,6 +557,7 @@ Single root for all artifacts simplifies reproducibility and cleanup.
 2. run-log CLI options (`--log_dir`, `--disable_file_logging`)
 3. automatic run logging via `start_run_logging` + `finalize_run_logging`
 4. Stage-3 parallel similarity computation now passes only per-file matrices to workers
+5. Stage-3 ProcessPool now uses `_init_similarity_worker` to limit thread oversubscription
 
 ### `train.py`
 

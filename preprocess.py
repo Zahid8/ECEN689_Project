@@ -498,6 +498,21 @@ def process_file_optimized(args):
     return file_similar_trajs, file_similarity_scores
 
 
+def _init_similarity_worker():
+    """
+    Reduce CPU thread oversubscription inside ProcessPool workers.
+    """
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+    try:
+        torch.set_num_threads(1)
+        torch.set_num_interop_threads(1)
+    except Exception:
+        pass
+
+
 def compute_trajectory_similarity(
     filename2idxs_dict,
     dist_weight=1,
@@ -517,7 +532,7 @@ def compute_trajectory_similarity(
     similar_scores = {}
 
     if max_workers is None:
-        max_workers = min(cpu_count(), len(filename2idxs_dict))
+        max_workers = min(8, cpu_count(), len(filename2idxs_dict))
 
     print("Calculating similarity...")
 
@@ -536,7 +551,10 @@ def compute_trajectory_similarity(
             for filename, idxs in filename2idxs_dict.items()
         ]
 
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_init_similarity_worker,
+        ) as executor:
             futures = [executor.submit(process_file_optimized, args) for args in args_list]
 
             for future in tqdm(as_completed(futures), total=len(futures), desc="Processing files"):

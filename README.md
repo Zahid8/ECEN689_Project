@@ -340,6 +340,23 @@ Verify these files exist:
 1. `outputs/processed_data/motsynth_centroid/train_trajs.pt`
 2. `outputs/processed_data/motsynth_centroid/train_similar_traj_dicts_hist.pickle`
 
+## Stage 3 (`traj_sim`) appears stuck for hours
+
+If progress stops during:
+
+1. `===== Stage 3: compute trajectory similarity dicts =====`
+2. `Processing files: ...`
+
+run Stage 3 only with fewer workers:
+
+```bash
+python preprocess.py --name motsynth --stage traj_sim --max_workers 4
+python preprocess_centroids.py --name motsynth --stage traj_sim --max_workers 4
+```
+
+This repository also now initializes similarity workers with single-threaded BLAS/Torch
+settings and uses a safer default worker cap to reduce process/thread oversubscription.
+
 ## Dependencies missing
 
 If imports fail (for example `omegaconf`), reinstall environment:
