@@ -35,9 +35,11 @@ def parse_args():
     )
     parser.add_argument(
         "--prompting_method",
+        choices=["sim", "weighted_stes"],
         type=str,
-        default="sim",
-        help="Prompting method setting for the dataset configuration.",
+        # default="sim",
+        default="weighted_stes",
+        help="Prompting method setting for the dataset configuration: sim or weighted_stes.",
     ) # random / sim
     parser.add_argument(
         "--example_pool_type",
@@ -92,9 +94,14 @@ def main():
         OmegaConf.set_struct(cfg, False)
 
     # --- 🔄 Update Configuration with Arguments ---
-        cfg.dataset.prompting = args.prompting_method
         cfg.dataset.name = dataset_name # Update dataset name for dataloader creation
         cfg.dataset.example_pool_type = args.example_pool_type
+
+        cfg.dataset.prompting = args.prompting_method
+        cfg.dataset.load_cluster_sizes  = (args.prompting_method == "weighted_stes")
+
+        if args.prompting_method == "weighted_stes" and args.example_pool_type == "raw":
+            warnings.warn("--prompting_method=weighted_stes and --example_pool_type=raw both specified")
 
 
     # --- 🏗️ Model Initialization and Loading ---
@@ -148,9 +155,8 @@ def main():
 
     # --- 📈 Final Results Formatting and Output ---
         print("\n" + "="*50)
-        print(f"✅ Final Results: **{run_name}** on **{cfg.dataset.name}**")
+        print(f"✅ Final Results: **{run_name}** on **{cfg.dataset.name}** using **{args.prompting_method}**")
         print("="*50)
-
         print("### 📊 minADE&minFDE vs Shot Summary")
 
     # Table format output: Shot (x-axis) vs. ADE/FDE (y-axis)
