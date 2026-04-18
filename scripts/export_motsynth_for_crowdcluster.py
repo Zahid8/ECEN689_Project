@@ -109,6 +109,11 @@ def read_agent_histories_from_mot_gt(gt_path: Path) -> Dict[int, np.ndarray]:
     return histories
 
 
+def read_agent_history_from_mot_gt(gt_path: Path) -> Dict[int, np.ndarray]:
+    """Alias for :func:`read_agent_histories_from_mot_gt` (plan naming)."""
+    return read_agent_histories_from_mot_gt(gt_path)
+
+
 def load_scene_ids_from_file(list_path: Path) -> List[str]:
     """Load non-empty stripped lines from a scene list file."""
     with open(list_path, mode="r", encoding="utf-8") as f:
@@ -125,9 +130,9 @@ def write_motsynth_settings_py(
     filename: str,
 ) -> None:
     """Write CrowdCluster motsynth_settings.py override module."""
-    # Use paths relative to CrowdCluster-main when possible for portability
     out_py.parent.mkdir(parents=True, exist_ok=True)
     txt_abs = directory_txt.resolve()
+    csv_abs = (out_py.parent / filename).resolve()
     content = f'''"""CrowdCluster path overrides for MOTSynth (generated)."""
 
 directoryGT = r"{txt_abs.as_posix()}"
@@ -136,7 +141,7 @@ start = {start}
 finish = {finish}
 tdist = {tdist}
 tdirect = {tdirect}
-filename = {filename!r}
+filename = r"{csv_abs.as_posix()}"
 '''
     out_py.write_text(content, encoding="utf-8")
 
