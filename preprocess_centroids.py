@@ -1087,10 +1087,10 @@ def main():
     parser.add_argument(
         "--centroid_update_interval",
         type=int,
-        default=1,
+        default=10,
         help=(
-            "Deprecated compatibility flag. Centroid delta update is computed "
-            "per frame; cluster membership re-evaluation uses --reeval_interval."
+            "Centroid delta-update interval (frames). "
+            "Paper default is 10."
         ),
     )
 
