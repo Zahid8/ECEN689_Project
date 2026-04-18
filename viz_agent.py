@@ -10,7 +10,7 @@ import pandas as pd
 
 from preprocess_centroids import build_centroid_tracks_from_clusters, run_dynamic_clustering_scene
 from utils.data import make_motsynth_df, resolve_motsynth_root
-from utils.plotting import prepare_matplotlib
+from utils.plotting import get_distinct_colors, prepare_matplotlib
 from utils.run_logging import finalize_run_logging, start_run_logging
 
 
@@ -124,12 +124,12 @@ def _plot_raw_vs_cluster(
 
     # teammate style: one color per id
     raw_ids = sorted(raw_df["id"].astype(int).unique().tolist())
-    raw_cmap = plt.cm.get_cmap("hsv", max(1, len(raw_ids)))
+    raw_colors = get_distinct_colors(len(raw_ids))
     for i, pid in enumerate(raw_ids):
         sub = raw_df[raw_df["id"] == pid].sort_values("frame")
         if len(sub) < 2:
             continue
-        ax_raw.plot(sub["x"], sub["y"], linewidth=1.0, alpha=0.9, color=raw_cmap(i))
+        ax_raw.plot(sub["x"], sub["y"], linewidth=1.0, alpha=0.9, color=raw_colors[i])
 
     ax_raw.set_title(f"Raw trajectories scene {scene_id}, #pedestrians={len(raw_ids)}")
     ax_raw.set_xlabel("x")
@@ -139,12 +139,12 @@ def _plot_raw_vs_cluster(
     # teammate style: one color per cluster
     if not cluster_df.empty:
         cl_ids = sorted(cluster_df["cluster_id"].astype(int).unique().tolist())
-        cl_cmap = plt.cm.get_cmap("hsv", max(1, len(cl_ids)))
+        cl_colors = get_distinct_colors(len(cl_ids))
         for i, cid in enumerate(cl_ids):
             sub = cluster_df[cluster_df["cluster_id"] == cid].sort_values("frame")
             if len(sub) < 2:
                 continue
-            ax_cluster.plot(sub["x"], sub["y"], linewidth=1.4, alpha=0.95, color=cl_cmap(i))
+            ax_cluster.plot(sub["x"], sub["y"], linewidth=1.4, alpha=0.95, color=cl_colors[i])
         ax_cluster.set_title(f"Cluster trajectories scene {scene_id}, #clusters={len(cl_ids)}")
     else:
         ax_cluster.set_title("Cluster trajectories (empty)")

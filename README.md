@@ -22,6 +22,7 @@ This repository extends the original TrajICL pipeline with a production-ready ce
 - Checkpoint-vs-checkpoint benchmark script (`compare_checkpoints.py`)
 - Shared plotting backend (`utils/plotting.py`) used by benchmark/report/visualization scripts
 - Professional plot styling with SciencePlots (`science`, `no-latex`, `bright`, `grid`) via shared backend
+- Colorblind-safe scientific color scheme (Okabe-Ito inspired) applied across plot functions
 - Slide-ready visualization package generator (`viz.py`)
 - Annotation-scene visualization generator (`viz_scene.py`) for direct scene ids (e.g. `000`, `001`)
 - CrowdCluster-style raw-vs-cluster visualizer (`viz_agent.py`) + notebook (`viz_agent.ipynb`)
@@ -112,6 +113,10 @@ Install once:
 ```bash
 pip install SciencePlots
 ```
+The plotting backend also applies a consistent scientific palette:
+- line metrics: raw/baseline in blue, centroid/candidate in orange
+- improvement bars: green for positive, red for negative
+- dense scene trajectories: categorical palette tuned for readability (replacing HSV rainbow)
 
 ## Visualization (For Slides)
 ```bash

@@ -903,6 +903,13 @@ Integrated in:
 4. `viz_scene.py` (`prepare_matplotlib` import)
 5. `viz.py` (`prepare_matplotlib` import)
 
+Palette behavior:
+
+1. scientific constants in `SCIENTIFIC_COLORS` enforce consistent role-to-color mapping
+2. `plot_metric_lines(...)` uses blue/orange for left/right series
+3. `plot_metric_improvement(...)` uses green for positive improvement and red for negative
+4. `get_distinct_colors(count)` provides readable qualitative colors for dense multi-trajectory scene plots (replacing previous HSV rainbow usage in scene visualizers/notebook)
+
 ---
 
 ## 13) Operational Notes

@@ -1,8 +1,31 @@
 import os
 import warnings
-from typing import Iterable, Sequence
+from colorsys import hsv_to_rgb
+from typing import Iterable, List, Sequence, Tuple, Union
 
 SCIENCE_STYLE_STACK = ("science", "no-latex", "bright", "grid")
+SCIENTIFIC_COLORS = {
+    "blue": "#0072B2",
+    "orange": "#D55E00",
+    "green": "#009E73",
+    "sky": "#56B4E9",
+    "yellow": "#F0E442",
+    "purple": "#CC79A7",
+    "gray": "#6E7783",
+    "black": "#111111",
+}
+QUALITATIVE_BASE = [
+    SCIENTIFIC_COLORS["blue"],
+    SCIENTIFIC_COLORS["orange"],
+    SCIENTIFIC_COLORS["green"],
+    SCIENTIFIC_COLORS["purple"],
+    SCIENTIFIC_COLORS["sky"],
+    "#8C564B",
+    "#7F7F7F",
+    "#E69F00",
+    "#17BECF",
+    "#BCBD22",
+]
 
 
 def _apply_professional_style(plt) -> None:
@@ -30,6 +53,7 @@ def _apply_professional_style(plt) -> None:
             "axes.spines.top": False,
             "axes.spines.right": False,
             "font.size": 11,
+            "axes.prop_cycle": plt.cycler(color=QUALITATIVE_BASE),
         }
     )
 
@@ -56,6 +80,23 @@ def _ensure_parent_dirs(paths: Iterable[str]) -> None:
             os.makedirs(parent, exist_ok=True)
 
 
+def _hsv_color(i: int) -> Tuple[float, float, float]:
+    # Golden-ratio hue stepping gives visually separated colors for large-N tracks.
+    hue = (0.13 + (i * 0.61803398875)) % 1.0
+    sat = 0.58 + 0.10 * ((i % 3) / 2.0)
+    val = 0.78 + 0.08 * ((i % 2))
+    r, g, b = hsv_to_rgb(hue, min(0.85, sat), min(0.92, val))
+    return r, g, b
+
+
+def get_distinct_colors(count: int) -> List[Union[str, Tuple[float, float, float]]]:
+    if count <= 0:
+        return []
+    if count <= len(QUALITATIVE_BASE):
+        return QUALITATIVE_BASE[:count]
+    return [_hsv_color(i) for i in range(count)]
+
+
 def plot_metric_lines(
     shots: Sequence[int],
     left_vals: Sequence[float],
@@ -65,13 +106,15 @@ def plot_metric_lines(
     left_label: str,
     right_label: str,
     out_paths: Sequence[str],
+    left_color: str = SCIENTIFIC_COLORS["blue"],
+    right_color: str = SCIENTIFIC_COLORS["orange"],
 ) -> None:
     plt = prepare_matplotlib(use_agg=True)
     _ensure_parent_dirs(out_paths)
 
     plt.figure(figsize=(8, 5))
-    plt.plot(shots, left_vals, marker="o", linewidth=2, label=left_label)
-    plt.plot(shots, right_vals, marker="o", linewidth=2, label=right_label)
+    plt.plot(shots, left_vals, marker="o", linewidth=2.2, markersize=5, label=left_label, color=left_color)
+    plt.plot(shots, right_vals, marker="o", linewidth=2.2, markersize=5, label=right_label, color=right_color)
     plt.xlabel("num_example (shot)")
     plt.ylabel(ylabel)
     plt.title(title)
@@ -93,8 +136,12 @@ def plot_metric_improvement(
     _ensure_parent_dirs(out_paths)
 
     plt.figure(figsize=(8, 5))
-    plt.bar([str(s) for s in shots], improves)
-    plt.axhline(0.0, color="black", linewidth=1)
+    bar_colors = [
+        SCIENTIFIC_COLORS["green"] if v >= 0 else "#C44E52"
+        for v in improves
+    ]
+    plt.bar([str(s) for s in shots], improves, color=bar_colors, edgecolor=SCIENTIFIC_COLORS["black"], linewidth=0.3)
+    plt.axhline(0.0, color=SCIENTIFIC_COLORS["black"], linewidth=1)
     plt.xlabel("num_example (shot)")
     plt.ylabel(ylabel)
     plt.title(title)
