@@ -34,7 +34,9 @@ The centroid path is implemented in `preprocess_centroids.py` and integrated suc
 4. `compare_checkpoints.py`
 5. `viz.py`
 6. `viz_scene.py`
-7. `info.md` (this document)
+7. `viz_agent.py`
+8. `viz_agent.ipynb`
+9. `info.md` (this document)
 
 ### Modified files
 
@@ -677,6 +679,30 @@ Purpose: visualize raw vs centroid trajectories by annotation scene id (for exam
    1. `0` keeps all generated centroid tracks
    2. `N>0` keeps top `N` centroid tracks (ranked by `track_length * cluster_size`) for plotting/export
 10. uses one distinct color per raw agent id and one distinct color per plotted centroid cluster
+
+### `viz_agent.py` + `viz_agent.ipynb`
+
+Purpose: side-by-side raw-vs-cluster visualization with CrowdCluster-like plotting style.
+
+1. `viz_agent.py` reads one MOTSynth scene window:
+   1. scene id (`--scene_id`)
+   2. frame window (`--start`, `--finish`)
+2. raw panel uses bbox-center trajectories from `gt.txt`:
+   1. `x = bb_center_x`
+   2. `y = bb_center_y`
+3. clustering backend is our integrated dynamic clustering runtime:
+   1. `run_dynamic_clustering_scene`
+   2. `build_centroid_tracks_from_clusters`
+4. plot output style:
+   1. left panel = raw trajectories, one color per raw pedestrian id
+   2. right panel = cluster trajectories, one color per cluster id
+5. exports per run:
+   1. raw CSV
+   2. cluster CSV
+   3. cluster metadata JSON
+   4. summary JSON
+   5. optional side-by-side PNG
+6. `viz_agent.ipynb` now calls `run_plot_pipeline(...)` directly, so notebook visuals and CLI visuals stay consistent
 
 ---
 

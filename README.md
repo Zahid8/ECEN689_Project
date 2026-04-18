@@ -22,6 +22,7 @@ This repository extends the original TrajICL pipeline with a production-ready ce
 - Checkpoint-vs-checkpoint benchmark script (`compare_checkpoints.py`)
 - Slide-ready visualization package generator (`viz.py`)
 - Annotation-scene visualization generator (`viz_scene.py`) for direct scene ids (e.g. `000`, `001`)
+- CrowdCluster-style raw-vs-cluster visualizer (`viz_agent.py`) + notebook (`viz_agent.ipynb`)
 
 ## Quick Start
 
@@ -168,9 +169,42 @@ Outputs per scene are saved under:
 - `manifest.json`
 
 Notes:
-- `--n_agents` controls how many raw agent trajectories are plotted/exported per scene (top-ranked by trajectory support length); use `0` to keep all.
+- `--n_agents` controls how many raw agent trajectories are plotted/exported per scene.
+- `--raw_total` is an alias for `--n_agents` (if set, it overrides `--n_agents`).
+- `--raw_total_mode` controls how raw agents are picked when limited:
+  - `most_active` (default): longest tracks first
+  - `least_active`: shortest tracks first
 - `--n_clusters` controls how many centroid trajectories are plotted/exported per scene (top-ranked by trajectory support score); use `0` to keep all.
 - Colors are unique per raw agent id and unique per plotted centroid cluster in each scene panel.
+
+## Raw vs Cluster Plotting (CrowdCluster Style)
+This plotting flow mirrors your teammate’s side-by-side style:
+- left panel: raw trajectories (one color per pedestrian id)
+- right panel: cluster centroid trajectories (one color per cluster id)
+- raw coordinates are bbox center (`bb_center_x`, `bb_center_y`) from `gt.txt`
+
+CLI:
+```bash
+python viz_agent.py \
+  --scene_id 000 \
+  --data_dir dataset \
+  --start 75 \
+  --finish 950
+```
+
+Optional:
+```bash
+python viz_agent.py \
+  --scene_id 000 \
+  --data_dir dataset \
+  --start 75 \
+  --finish 950 \
+  --show_plot \
+  --no_save_image
+```
+
+Notebook:
+- Open [viz_agent.ipynb](/home/zahid/Projects/TrajICL/viz_agent.ipynb) to run the same plotting pipeline inline.
 
 ## Output Layout
 - `outputs/processed_data/` -> raw/centroid processed datasets
