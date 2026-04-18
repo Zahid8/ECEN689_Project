@@ -123,5 +123,5 @@ python compare_checkpoints.py \
 
 ## Upstream References
 
-- TrajICL foundation: *Towards Predicting Any Human Trajectory In Context* (NeurIPS 2025)
-- Dynamic clustering reference: *Efficient Dense Crowd Trajectory Prediction Via Dynamic Clustering*
+- TrajICL foundation: *[Towards Predicting Any Human Trajectory In Context](https://arxiv.org/abs/2506.00871)* (NeurIPS 2025)
+- Dynamic clustering reference: *[Efficient Dense Crowd Trajectory Prediction Via Dynamic Clustering](https://arxiv.org/abs/2603.18166)*
