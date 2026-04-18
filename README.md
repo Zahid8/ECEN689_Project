@@ -129,6 +129,11 @@ Figure interpretation:
   - solid = history
   - dashed = future
 
+If centroid trajectories appear as staircase/dot-only artifacts, regenerate centroid processed data with the current `preprocess_centroids.py` (older centroid outputs may still contain stale held-position behavior):
+```bash
+python preprocess_centroids.py --name motsynth --stage all
+```
+
 ## Output Layout
 - `outputs/processed_data/` -> raw/centroid processed datasets
 - `outputs/TrajICL/raw/` -> raw-model checkpoints

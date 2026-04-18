@@ -704,12 +704,10 @@ An observed pattern like this is expected in part:
 Interpretation:
 
 1. Lower centroid `agent_count_mean` is expected because multiple pedestrians are replaced by fewer cluster-representative tracks.
-2. Very low centroid `primary_speed_mean` / `primary_displacement_mean` is strongly influenced by centroid update semantics in this implementation:
-   1. centroid positions are updated every `centroid_update_interval` frames (default 10)
-   2. between update frames, centroid positions are held constant
-   3. naive per-frame speed/displacement statistics therefore include many near-zero deltas
+2. Centroid `primary_speed_mean` / `primary_displacement_mean` can still be lower than raw because one centroid represents multi-agent group motion, but centroid paths are now propagated per frame via delta updates (Eq. 3-4) rather than held constant between evaluation frames.
+3. If you see staircase or dot-like centroid tracks, check whether the dataset was generated with an older preprocessing run and regenerate centroid data.
 
-So these raw-vs-centroid speed/displacement values are **not strictly apples-to-apples** without normalization for centroid update interval and effective update frames.
+So these raw-vs-centroid speed/displacement values are still **not strictly apples-to-apples** because representation semantics differ (individual trajectories vs cluster representatives).
 
 Recommended slide note:
 
