@@ -91,11 +91,10 @@ class Dataset(torch.utils.data.Dataset):
         mask = self.masks[valid_idx]  # torch.Size([N, 21, 1])
 
         candidates = self.similarity_dicts[fold][valid_idx] 
-        example_idxs = []
     
         if self.selector is not None:
             example_idxs = self.selector(valid_idx, candidates)
-        if self.prompting == "random":
+        elif self.prompting == "random":
             example_idxs = random_prompting(
                 valid_idx, self.num_example, self.similarity_dicts[fold]
             )

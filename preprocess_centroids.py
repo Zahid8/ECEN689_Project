@@ -1053,6 +1053,22 @@ def process_split(
         },
     )
 
+    import pickle as _pickle
+    cluster_sizes_by_sample_idx = {
+        idx: int(centroid_metadata.get(str(global_id), {}).get("cluster_size", 1))
+        for idx, global_id in enumerate(centroid_pedestrians_list)
+    }
+    with open(
+        os.path.join(save_dir, f"{split}_cluster_sizes.pickle"), 
+        "wb"
+    ) as f:
+        _pickle.dump(cluster_sizes_by_sample_idx, f)
+    print(
+        f"[{split}] wrote cluster_sizes.pickle "
+        f"({len(cluster_sizes_by_sample_idx)} samples, "
+        f"mean size = {np.mean(list(cluster_sizes_by_sample_idx.values())):.2f})"
+    )
+
     return save_name
 
 
