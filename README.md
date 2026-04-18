@@ -104,7 +104,8 @@ python viz.py \
   --raw_dir outputs/processed_data/motsynth \
   --centroid_dir outputs/processed_data/motsynth_centroid \
   --split train \
-  --num_samples 10
+  --num_samples 10 \
+  --pair_coordinate_mode both
 ```
 
 Artifacts are saved under:
@@ -112,7 +113,15 @@ Artifacts are saved under:
 
 Figure interpretation:
 - `00_before_vs_after_raw_vs_centroid.png` and `03_raw_vs_centroid_pairs.png` are now metadata-matched (`centroid_metadata[*].source_sample_index`) so raw and centroid panels come from the same source sample.
-- These paired figures are origin-normalized (primary trajectory starts at `(0,0)`) and use shared axis limits across both panels for fair shape comparison.
+- By default (`--pair_coordinate_mode both`), paired plots are exported in two variants:
+  - absolute coordinates:
+    - `00_before_vs_after_raw_vs_centroid.png`
+    - `03_raw_vs_centroid_pairs.png`
+  - normalized coordinates (shape-focused):
+    - `00_before_vs_after_raw_vs_centroid_normalized.png`
+    - `03_raw_vs_centroid_pairs_normalized.png`
+- Absolute mode is best for validating whether centroid tracks are spatially plausible in the original scene.
+- Normalized mode is best for trajectory-shape comparison independent of global translation.
 - `01_raw_samples_grid.png` and `02_centroid_samples_grid.png` are independent sample grids for each representation (not one-to-one pairs).
 - Color semantics in all trajectory panels:
   - blue = primary trajectory
