@@ -21,6 +21,7 @@ This repository extends the original TrajICL pipeline with a production-ready ce
 - Raw-vs-centroid benchmark script (`compare_raw_vs_centroid.py`)
 - Checkpoint-vs-checkpoint benchmark script (`compare_checkpoints.py`)
 - Slide-ready visualization package generator (`viz.py`)
+- Annotation-scene visualization generator (`viz_scene.py`) for direct scene ids (e.g. `000`, `001`)
 
 ## Quick Start
 
@@ -104,7 +105,8 @@ python viz.py \
   --raw_dir outputs/processed_data/motsynth \
   --centroid_dir outputs/processed_data/motsynth_centroid \
   --split train \
-  --num_samples 10
+  --num_samples 10 \
+  --pair_coordinate_mode both
 ```
 
 Artifacts are saved under:
@@ -112,13 +114,63 @@ Artifacts are saved under:
 
 Figure interpretation:
 - `00_before_vs_after_raw_vs_centroid.png` and `03_raw_vs_centroid_pairs.png` are now metadata-matched (`centroid_metadata[*].source_sample_index`) so raw and centroid panels come from the same source sample.
-- These paired figures are origin-normalized (primary trajectory starts at `(0,0)`) and use shared axis limits across both panels for fair shape comparison.
+- By default (`--pair_coordinate_mode both`), paired plots are exported in two variants:
+  - absolute coordinates:
+    - `00_before_vs_after_raw_vs_centroid.png`
+    - `03_raw_vs_centroid_pairs.png`
+  - normalized coordinates (shape-focused):
+    - `00_before_vs_after_raw_vs_centroid_normalized.png`
+    - `03_raw_vs_centroid_pairs_normalized.png`
+- Absolute mode is best for validating whether centroid tracks are spatially plausible in the original scene.
+- Normalized mode is best for trajectory-shape comparison independent of global translation.
 - `01_raw_samples_grid.png` and `02_centroid_samples_grid.png` are independent sample grids for each representation (not one-to-one pairs).
 - Color semantics in all trajectory panels:
   - blue = primary trajectory
   - orange = context trajectories
   - solid = history
   - dashed = future
+
+If centroid trajectories appear as staircase/dot-only artifacts, regenerate centroid processed data with the current `preprocess_centroids.py` (older centroid outputs may still contain stale held-position behavior):
+```bash
+python preprocess_centroids.py --name motsynth --stage all
+```
+
+## Annotation Scene Visualization (No Sample Indices)
+To visualize raw vs centroid trajectories directly from annotation scene ids:
+```bash
+python viz_scene.py \
+  --scenes 000,001 \
+  --data_dir dataset \
+  --n_agents 57 \
+  --n_clusters 32
+```
+
+Optional filtering/subsampling:
+```bash
+python viz_scene.py \
+  --scenes 000 \
+  --data_dir dataset \
+  --frame_step 1 \
+  --min_track_len 1 \
+  --n_agents 57 \
+  --n_clusters 32
+```
+
+This reads from:
+- `dataset/mot_annotations/<scene_id>/gt/gt.txt`
+
+Outputs per scene are saved under:
+- `outputs/visualizations/scene_annotations_<timestamp>/`
+- `<scene>_raw_vs_centroid.png`
+- `<scene>_raw_tracks.csv`
+- `<scene>_centroid_tracks.csv`
+- `<scene>_centroid_metadata.json`
+- `manifest.json`
+
+Notes:
+- `--n_agents` controls how many raw agent trajectories are plotted/exported per scene (top-ranked by trajectory support length); use `0` to keep all.
+- `--n_clusters` controls how many centroid trajectories are plotted/exported per scene (top-ranked by trajectory support score); use `0` to keep all.
+- Colors are unique per raw agent id and unique per plotted centroid cluster in each scene panel.
 
 ## Output Layout
 - `outputs/processed_data/` -> raw/centroid processed datasets

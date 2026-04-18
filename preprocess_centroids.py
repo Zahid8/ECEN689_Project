@@ -49,7 +49,6 @@ class ClusterRuntime:
     member_history: Dict[int, List[int]] = field(default_factory=dict)
     size_history: Dict[int, int] = field(default_factory=dict)
     last_nonempty_frame_idx: int = 0
-    last_centroid_update_frame_idx: int = 0
     active: bool = True
 
 
@@ -364,7 +363,6 @@ def create_cluster(
         created_frame_idx=frame_idx,
         members=set(member_ids),
         last_nonempty_frame_idx=frame_idx,
-        last_centroid_update_frame_idx=frame_idx,
         active=True,
     )
 
@@ -493,7 +491,6 @@ def initialize_centroid(cluster_members: Sequence[int], active_states: Dict[int,
 def update_centroid_with_delta(
     prev_centroid_xy: np.ndarray,
     cluster_members_curr: Sequence[int],
-    active_states_curr: Dict[int, PedestrianState],
     track_xy: np.ndarray,
     track_mask: np.ndarray,
     frame_idx: int,
@@ -528,6 +525,11 @@ def run_dynamic_clustering_scene(
     cluster_empty_tolerance: int,
     centroid_update_interval: int,
 ):
+    # Retained for backward CLI/config compatibility. Centroid delta update is
+    # applied per frame based on Eq. (3)-(4); membership re-evaluation cadence
+    # is controlled by `reeval_interval`.
+    _ = centroid_update_interval
+
     num_pedestrians, seq_len, _, _ = scene_traj.shape
     track_xy = scene_traj[:, :, 0, :2].astype(np.float32)
     track_mask = scene_mask[:, :, 0].astype(bool)
@@ -618,23 +620,22 @@ def run_dynamic_clustering_scene(
                 if prev_centroid is None:
                     if members_now:
                         cluster.centroid_by_frame[frame_idx] = initialize_centroid(members_now, active_states)
-                        cluster.last_centroid_update_frame_idx = frame_idx
                     continue
 
-                if (
-                    members_now
-                    and (frame_idx - cluster.last_centroid_update_frame_idx) >= centroid_update_interval
-                ):
+                # Paper Eq. (3)-(4) defines centroid update from t-1 -> t displacement.
+                # We therefore propagate centroid every frame via average member delta
+                # (while membership itself is re-evaluated every `reeval_interval`).
+                # This avoids staircase-like trajectories from holding positions for
+                # multiple frames and better matches Figure 2 behavior.
+                if members_now:
                     updated_centroid = update_centroid_with_delta(
                         prev_centroid_xy=prev_centroid,
                         cluster_members_curr=members_now,
-                        active_states_curr=active_states,
                         track_xy=track_xy,
                         track_mask=track_mask,
                         frame_idx=frame_idx,
                     )
                     cluster.centroid_by_frame[frame_idx] = updated_centroid
-                    cluster.last_centroid_update_frame_idx = frame_idx
                 else:
                     cluster.centroid_by_frame[frame_idx] = prev_centroid.copy()
 
@@ -690,7 +691,11 @@ def build_centroid_tracks_from_clusters(
             if centroid is None:
                 continue
             trajectory[frame_idx] = centroid
-            mask[frame_idx] = 1.0
+            # Only expose centroid points for frames where the cluster has members.
+            # This prevents plotting/using stale carried-forward positions as active
+            # trajectories when a cluster is temporarily empty.
+            if cluster.size_history.get(frame_idx, 0) > 0:
+                mask[frame_idx] = 1.0
 
         valid_idxs = np.where(mask > 0)[0]
         if len(valid_idxs) < 2:
@@ -1082,7 +1087,15 @@ def main():
 
     # Algorithm 1 lists >10 while text also mentions 5+; default to Algorithm 1 value (10).
     parser.add_argument("--temporary_recluster_min_size", type=int, default=10)
-    parser.add_argument("--centroid_update_interval", type=int, default=10)
+    parser.add_argument(
+        "--centroid_update_interval",
+        type=int,
+        default=1,
+        help=(
+            "Deprecated compatibility flag. Centroid delta update is computed "
+            "per frame; cluster membership re-evaluation uses --reeval_interval."
+        ),
+    )
 
     parser.add_argument("--dist_weight", type=float, default=1.0)
     parser.add_argument("--vel_weight", type=float, default=1.0)

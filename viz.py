@@ -28,6 +28,17 @@ def parse_args():
     parser.add_argument("--hist_len", type=int, default=9)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--max_agents_per_plot", type=int, default=40)
+    parser.add_argument(
+        "--pair_coordinate_mode",
+        type=str,
+        default="both",
+        choices=["absolute", "normalized", "both"],
+        help=(
+            "Coordinate mode for paired raw-vs-centroid figures: "
+            "'absolute' keeps scene coordinates, 'normalized' subtracts each panel's "
+            "primary origin, 'both' exports both variants."
+        ),
+    )
     parser.add_argument("--max_heatmap_points", type=int, default=500000)
     parser.add_argument(
         "--stats_max_samples",
@@ -452,11 +463,15 @@ def make_before_after_figure(
             axes[1].set_xlim(*xlim)
             axes[1].set_ylim(*ylim)
 
+    if normalize_origin:
+        coord_note = "Paired plots: origin-normalized + shared axes"
+    else:
+        coord_note = "Paired plots: absolute scene coordinates + shared axes"
     legend_text = (
         "Blue: primary track\n"
         "Orange: context tracks\n"
         "Solid: history, Dashed: future\n"
-        "Paired plots: origin-normalized + shared axes"
+        f"{coord_note}"
     )
     fig.text(
         0.5,
@@ -642,24 +657,78 @@ def main():
         )
 
         print("Generating sample trajectory grids...")
-        before_after = os.path.join(out_dir, "00_before_vs_after_raw_vs_centroid.png")
+        before_after_abs = os.path.join(out_dir, "00_before_vs_after_raw_vs_centroid.png")
+        before_after_norm = os.path.join(
+            out_dir,
+            "00_before_vs_after_raw_vs_centroid_normalized.png",
+        )
         raw_grid = os.path.join(out_dir, "01_raw_samples_grid.png")
         cen_grid = os.path.join(out_dir, "02_centroid_samples_grid.png")
-        pair_grid = os.path.join(out_dir, "03_raw_vs_centroid_pairs.png")
-
-        make_before_after_figure(
-            raw_trajs,
-            raw_masks,
-            pair_raw_idxs[0],
-            cen_trajs,
-            cen_masks,
-            pair_cen_idxs[0],
-            args.hist_len,
-            args.max_agents_per_plot,
-            before_after,
-            normalize_origin=True,
-            share_axes=True,
+        pair_grid_abs = os.path.join(out_dir, "03_raw_vs_centroid_pairs.png")
+        pair_grid_norm = os.path.join(
+            out_dir,
+            "03_raw_vs_centroid_pairs_normalized.png",
         )
+
+        do_abs = args.pair_coordinate_mode in ("absolute", "both")
+        do_norm = args.pair_coordinate_mode in ("normalized", "both")
+
+        if do_abs:
+            make_before_after_figure(
+                raw_trajs,
+                raw_masks,
+                pair_raw_idxs[0],
+                cen_trajs,
+                cen_masks,
+                pair_cen_idxs[0],
+                args.hist_len,
+                args.max_agents_per_plot,
+                before_after_abs,
+                normalize_origin=False,
+                share_axes=True,
+            )
+            make_side_by_side_pairs(
+                raw_trajs,
+                raw_masks,
+                pair_raw_idxs,
+                cen_trajs,
+                cen_masks,
+                pair_cen_idxs,
+                args.hist_len,
+                args.max_agents_per_plot,
+                pair_grid_abs,
+                normalize_origin=False,
+                share_axes=True,
+            )
+
+        if do_norm:
+            make_before_after_figure(
+                raw_trajs,
+                raw_masks,
+                pair_raw_idxs[0],
+                cen_trajs,
+                cen_masks,
+                pair_cen_idxs[0],
+                args.hist_len,
+                args.max_agents_per_plot,
+                before_after_norm,
+                normalize_origin=True,
+                share_axes=True,
+            )
+            make_side_by_side_pairs(
+                raw_trajs,
+                raw_masks,
+                pair_raw_idxs,
+                cen_trajs,
+                cen_masks,
+                pair_cen_idxs,
+                args.hist_len,
+                args.max_agents_per_plot,
+                pair_grid_norm,
+                normalize_origin=True,
+                share_axes=True,
+            )
+
         make_samples_grid(
             raw_trajs,
             raw_masks,
@@ -677,19 +746,6 @@ def main():
             args.max_agents_per_plot,
             "Centroid Dataset: Multi-Agent Trajectory Samples",
             cen_grid,
-        )
-        make_side_by_side_pairs(
-            raw_trajs,
-            raw_masks,
-            pair_raw_idxs,
-            cen_trajs,
-            cen_masks,
-            pair_cen_idxs,
-            args.hist_len,
-            args.max_agents_per_plot,
-            pair_grid,
-            normalize_origin=True,
-            share_axes=True,
         )
 
         print("Generating global distribution and heatmap comparisons...")
@@ -767,10 +823,10 @@ def main():
         )
 
         ordered_pngs = [
-            before_after,
+            before_after_abs if do_abs else before_after_norm,
             raw_grid,
             cen_grid,
-            pair_grid,
+            pair_grid_abs if do_abs else pair_grid_norm,
             raw_heatmap,
             cen_heatmap,
             agent_hist,
@@ -780,6 +836,9 @@ def main():
             agent_box,
             speed_curve,
         ]
+        if do_abs and do_norm:
+            ordered_pngs.insert(1, before_after_norm)
+            ordered_pngs.insert(5, pair_grid_norm)
         pdf_report = build_pdf_report(
             out_dir,
             ordered_pngs,

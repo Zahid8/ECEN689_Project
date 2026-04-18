@@ -33,7 +33,8 @@ The centroid path is implemented in `preprocess_centroids.py` and integrated suc
 3. `compare_raw_vs_centroid.py`
 4. `compare_checkpoints.py`
 5. `viz.py`
-6. `info.md` (this document)
+6. `viz_scene.py`
+7. `info.md` (this document)
 
 ### Modified files
 
@@ -75,7 +76,7 @@ Fields:
 3. centroid trajectory cache (`centroid_by_frame`)
 4. centroid direction cache (`direction_by_frame`)
 5. membership/size histories (`member_history`, `size_history`)
-6. lifecycle control (`last_nonempty_frame_idx`, `last_centroid_update_frame_idx`, `active`)
+6. lifecycle control (`last_nonempty_frame_idx`, `active`)
 Purpose: full evolving cluster state across frames.
 
 ## 3.2 Direction and distance primitives
@@ -631,20 +632,51 @@ Single root for all artifacts simplifies reproducibility and cleanup.
    1. raw multi-agent sample grid
    2. centroid multi-agent sample grid
    3. raw-vs-centroid side-by-side sample pairs (matched by source sample where metadata exists)
-5. paired comparison figures (`00_before_vs_after...`, `03_raw_vs_centroid_pairs...`) apply:
-   1. origin normalization (primary track starts at `(0,0)` in each panel)
-   2. shared axis limits across raw and centroid panel in the same pair
-6. generates dataset-level visuals:
+5. paired comparison figures support coordinate modes controlled by `--pair_coordinate_mode`:
+   1. `absolute`: keeps original scene coordinates
+   2. `normalized`: subtracts each panel primary origin
+   3. `both` (default): exports both absolute and normalized variants
+6. paired comparison figures (`00_before_vs_after...`, `03_raw_vs_centroid_pairs...`) apply:
+   1. shared axis limits across raw and centroid panel in the same pair
+   2. origin normalization only for the `normalized` variants
+7. generates dataset-level visuals:
    1. raw spatial occupancy heatmap
    2. centroid spatial occupancy heatmap
    3. agent count histogram/boxplot comparisons
    4. primary speed/displacement/heading distributions
    5. mean primary speed over timestep curve
-7. saves summary statistics to JSON (`summary_stats.json`)
-8. compiles all generated PNGs into a multi-page PDF report
-9. writes outputs to `outputs/visualizations/raw_vs_centroid_<timestamp>/`
-10. supports automatic run logging to `outputs/logs/viz_<timestamp>.log`
-11. lazy-loads matplotlib so `--help` works even when plotting dependencies are not installed
+8. saves summary statistics to JSON (`summary_stats.json`)
+9. compiles all generated PNGs into a multi-page PDF report
+10. writes outputs to `outputs/visualizations/raw_vs_centroid_<timestamp>/`
+11. supports automatic run logging to `outputs/logs/viz_<timestamp>.log`
+12. lazy-loads matplotlib so `--help` works even when plotting dependencies are not installed
+
+### `viz_scene.py`
+
+Purpose: visualize raw vs centroid trajectories by annotation scene id (for example `000`, `001`) instead of processed sample indices.
+
+1. resolves MOTSynth root using the same loader logic as preprocessing (`resolve_motsynth_root`)
+2. reads annotation files from `dataset/mot_annotations/<scene>/gt/gt.txt` (or equivalent resolved root)
+3. builds raw per-agent trajectories directly from annotation frames
+4. runs the same dynamic clustering runtime used in centroid preprocessing:
+   1. nested direction+location initialization
+   2. LOF-based reassignment every `reeval_interval`
+   3. temporary-pool reclustering
+   4. centroid track construction from cluster runtime
+5. writes per-scene comparison artifacts:
+   1. `<scene>_raw_vs_centroid.png`
+   2. `<scene>_raw_tracks.csv`
+   3. `<scene>_centroid_tracks.csv`
+   4. `<scene>_centroid_metadata.json`
+6. writes run manifest (`manifest.json`) containing counts and file paths
+7. supports multiple scenes in one command via `--scenes 000,001,...`
+8. supports user-provided raw agent count via `--n_agents`:
+   1. `0` keeps all eligible raw agents
+   2. `N>0` keeps top `N` raw agents (ranked by valid trajectory length) for plotting/export
+9. supports user-provided centroid count via `--n_clusters`:
+   1. `0` keeps all generated centroid tracks
+   2. `N>0` keeps top `N` centroid tracks (ranked by `track_length * cluster_size`) for plotting/export
+10. uses one distinct color per raw agent id and one distinct color per plotted centroid cluster
 
 ---
 
@@ -672,7 +704,11 @@ Important nuance:
 4. For one-to-one comparisons, use:
    1. `00_before_vs_after_raw_vs_centroid.png`
    2. `03_raw_vs_centroid_pairs.png`
-5. `00` and `03` are generated from metadata-matched samples and plotted with shared axis limits after origin normalization; this avoids misleading visual scale offsets between raw and centroid panels.
+5. For normalized shape comparisons, use:
+   1. `00_before_vs_after_raw_vs_centroid_normalized.png`
+   2. `03_raw_vs_centroid_pairs_normalized.png`
+6. `00` and `03` are generated from metadata-matched samples and plotted with shared axis limits.
+7. If your goal is to verify physical scene consistency (\"is this centroid where the raw group is?\"), use the absolute-coordinate files (`00`, `03`) instead of normalized files.
 
 ### Interpreting raw vs centroid summary stats
 
@@ -696,12 +732,10 @@ An observed pattern like this is expected in part:
 Interpretation:
 
 1. Lower centroid `agent_count_mean` is expected because multiple pedestrians are replaced by fewer cluster-representative tracks.
-2. Very low centroid `primary_speed_mean` / `primary_displacement_mean` is strongly influenced by centroid update semantics in this implementation:
-   1. centroid positions are updated every `centroid_update_interval` frames (default 10)
-   2. between update frames, centroid positions are held constant
-   3. naive per-frame speed/displacement statistics therefore include many near-zero deltas
+2. Centroid `primary_speed_mean` / `primary_displacement_mean` can still be lower than raw because one centroid represents multi-agent group motion, but centroid paths are now propagated per frame via delta updates (Eq. 3-4) rather than held constant between evaluation frames.
+3. If you see staircase or dot-like centroid tracks, check whether the dataset was generated with an older preprocessing run and regenerate centroid data.
 
-So these raw-vs-centroid speed/displacement values are **not strictly apples-to-apples** without normalization for centroid update interval and effective update frames.
+So these raw-vs-centroid speed/displacement values are still **not strictly apples-to-apples** because representation semantics differ (individual trajectories vs cluster representatives).
 
 Recommended slide note:
 
