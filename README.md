@@ -21,6 +21,7 @@ This repository extends the original TrajICL pipeline with a production-ready ce
 - Raw-vs-centroid benchmark script (`compare_raw_vs_centroid.py`)
 - Checkpoint-vs-checkpoint benchmark script (`compare_checkpoints.py`)
 - Slide-ready visualization package generator (`viz.py`)
+- Annotation-scene visualization generator (`viz_scene.py`) for direct scene ids (e.g. `000`, `001`)
 
 ## Quick Start
 
@@ -133,6 +134,43 @@ If centroid trajectories appear as staircase/dot-only artifacts, regenerate cent
 ```bash
 python preprocess_centroids.py --name motsynth --stage all
 ```
+
+## Annotation Scene Visualization (No Sample Indices)
+To visualize raw vs centroid trajectories directly from annotation scene ids:
+```bash
+python viz_scene.py \
+  --scenes 000,001 \
+  --data_dir dataset \
+  --n_agents 57 \
+  --n_clusters 32
+```
+
+Optional filtering/subsampling:
+```bash
+python viz_scene.py \
+  --scenes 000 \
+  --data_dir dataset \
+  --frame_step 1 \
+  --min_track_len 1 \
+  --n_agents 57 \
+  --n_clusters 32
+```
+
+This reads from:
+- `dataset/mot_annotations/<scene_id>/gt/gt.txt`
+
+Outputs per scene are saved under:
+- `outputs/visualizations/scene_annotations_<timestamp>/`
+- `<scene>_raw_vs_centroid.png`
+- `<scene>_raw_tracks.csv`
+- `<scene>_centroid_tracks.csv`
+- `<scene>_centroid_metadata.json`
+- `manifest.json`
+
+Notes:
+- `--n_agents` controls how many raw agent trajectories are plotted/exported per scene (top-ranked by trajectory support length); use `0` to keep all.
+- `--n_clusters` controls how many centroid trajectories are plotted/exported per scene (top-ranked by trajectory support score); use `0` to keep all.
+- Colors are unique per raw agent id and unique per plotted centroid cluster in each scene panel.
 
 ## Output Layout
 - `outputs/processed_data/` -> raw/centroid processed datasets

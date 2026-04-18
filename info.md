@@ -33,7 +33,8 @@ The centroid path is implemented in `preprocess_centroids.py` and integrated suc
 3. `compare_raw_vs_centroid.py`
 4. `compare_checkpoints.py`
 5. `viz.py`
-6. `info.md` (this document)
+6. `viz_scene.py`
+7. `info.md` (this document)
 
 ### Modified files
 
@@ -75,7 +76,7 @@ Fields:
 3. centroid trajectory cache (`centroid_by_frame`)
 4. centroid direction cache (`direction_by_frame`)
 5. membership/size histories (`member_history`, `size_history`)
-6. lifecycle control (`last_nonempty_frame_idx`, `last_centroid_update_frame_idx`, `active`)
+6. lifecycle control (`last_nonempty_frame_idx`, `active`)
 Purpose: full evolving cluster state across frames.
 
 ## 3.2 Direction and distance primitives
@@ -649,6 +650,33 @@ Single root for all artifacts simplifies reproducibility and cleanup.
 10. writes outputs to `outputs/visualizations/raw_vs_centroid_<timestamp>/`
 11. supports automatic run logging to `outputs/logs/viz_<timestamp>.log`
 12. lazy-loads matplotlib so `--help` works even when plotting dependencies are not installed
+
+### `viz_scene.py`
+
+Purpose: visualize raw vs centroid trajectories by annotation scene id (for example `000`, `001`) instead of processed sample indices.
+
+1. resolves MOTSynth root using the same loader logic as preprocessing (`resolve_motsynth_root`)
+2. reads annotation files from `dataset/mot_annotations/<scene>/gt/gt.txt` (or equivalent resolved root)
+3. builds raw per-agent trajectories directly from annotation frames
+4. runs the same dynamic clustering runtime used in centroid preprocessing:
+   1. nested direction+location initialization
+   2. LOF-based reassignment every `reeval_interval`
+   3. temporary-pool reclustering
+   4. centroid track construction from cluster runtime
+5. writes per-scene comparison artifacts:
+   1. `<scene>_raw_vs_centroid.png`
+   2. `<scene>_raw_tracks.csv`
+   3. `<scene>_centroid_tracks.csv`
+   4. `<scene>_centroid_metadata.json`
+6. writes run manifest (`manifest.json`) containing counts and file paths
+7. supports multiple scenes in one command via `--scenes 000,001,...`
+8. supports user-provided raw agent count via `--n_agents`:
+   1. `0` keeps all eligible raw agents
+   2. `N>0` keeps top `N` raw agents (ranked by valid trajectory length) for plotting/export
+9. supports user-provided centroid count via `--n_clusters`:
+   1. `0` keeps all generated centroid tracks
+   2. `N>0` keeps top `N` centroid tracks (ranked by `track_length * cluster_size`) for plotting/export
+10. uses one distinct color per raw agent id and one distinct color per plotted centroid cluster
 
 ---
 
