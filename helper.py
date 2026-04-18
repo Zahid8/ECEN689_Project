@@ -59,20 +59,20 @@ def train(
             model,
             training=True,
         )
-    res["loss"].backward()
-    torch.nn.utils.clip_grad_norm_(
-        model.parameters(), cfg["training"]["max_grad_norm"]
-    )
-    optimizer.step()
-    # Update scheduler
-    if scheduler is not None:
-        scheduler.step()
+        res["loss"].backward()
+        torch.nn.utils.clip_grad_norm_(
+            model.parameters(), cfg["training"]["max_grad_norm"]
+        )
+        optimizer.step()
+        # Update scheduler
+        if scheduler is not None:
+            scheduler.step()
 
-    for key, value in res.items():
-        if key == "loss":
-            losses_avg[key].update(value.item(), B)
-        else:
-            losses_avg[key].update(value, B)
+        for key, value in res.items():
+            if key == "loss":
+                losses_avg[key].update(value.item(), B)
+            else:
+                losses_avg[key].update(value, B)
 
     stats = update_stats(
         stats,
