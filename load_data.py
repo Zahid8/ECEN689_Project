@@ -12,6 +12,7 @@ def load_processed_data(
     centroid_suffix="_centroid",
     processed_root="outputs/processed_data",
     load_similarity_seq=False,
+    load_cluster_sizes=False,
 ):
     if example_pool_type == "centroid":
         if name.endswith(centroid_suffix):
@@ -63,6 +64,15 @@ def load_processed_data(
         ) as fi:
             similarity_dicts_seq = pickle.load(fi)
 
+    cluster_sizes = None
+    if load_cluster_sizes:
+        try:
+            with open(f"{save_dir}/{split}_cluster_sizes.pickle", mode="rb") as fi:
+                cluster_sizes = pickle.load(fi)
+        except FileNotFoundError:
+            print(f"Cluster sizes not found for {split}")
+            cluster_sizes = None
+
     return (
         trajs,
         masks,
@@ -72,6 +82,7 @@ def load_processed_data(
         valid_indices_by_fold,
         similarity_dicts,
         similarity_dicts_seq,
+        cluster_sizes,
     )
 
 
