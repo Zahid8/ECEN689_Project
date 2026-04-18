@@ -22,6 +22,8 @@ class Dataset(torch.utils.data.Dataset):
         centroid_suffix="_centroid",
         processed_root="outputs/processed_data",
         load_similarity_seq=False,
+        load_cluster_sizes=False,
+        cfg=None,
     ):
 
         self.name = name
@@ -45,6 +47,7 @@ class Dataset(torch.utils.data.Dataset):
             self.valid_indices_by_fold,
             self.similarity_dicts,
             self.similarity_dicts_seq,
+            self.cluster_sizes,
         ) = load_processed_data(
             split,
             name,
@@ -52,7 +55,13 @@ class Dataset(torch.utils.data.Dataset):
             centroid_suffix=centroid_suffix,
             processed_root=processed_root,
             load_similarity_seq=load_similarity_seq,
+            load_cluster_sizes=load_cluster_sizes,
         )
+
+        self.selector = None
+        if cfg is not None:
+            from helper import build_example_selector
+            self.selector = build_example_selector(cfg, self.cluster_sizes)
 
         if split == "train":
             self.valid_indices_fold_pairs = []
@@ -81,7 +90,11 @@ class Dataset(torch.utils.data.Dataset):
         traj = self.trajs[valid_idx]  # torch.Size([N, 21, 1, 3])
         mask = self.masks[valid_idx]  # torch.Size([N, 21, 1])
 
+        candidates = self.similarity_dicts[fold][valid_idx] 
         example_idxs = []
+    
+        if self.selector is not None:
+            example_idxs = self.selector(valid_idx, candidates)
         if self.prompting == "random":
             example_idxs = random_prompting(
                 valid_idx, self.num_example, self.similarity_dicts[fold]
@@ -89,7 +102,9 @@ class Dataset(torch.utils.data.Dataset):
         elif self.prompting == "sim":
             example_idxs = sim_prompting(
                     valid_idx, self.num_example, self.similarity_dicts[fold]
-                )
+            )
+        else:
+            example_idxs = []
 
         trajs_list = []
         masks_list = []
@@ -109,6 +124,7 @@ def create_dataset(split, cfg):
     centroid_suffix = cfg.dataset.get("centroid_suffix", "_centroid")
     processed_root = cfg.dataset.get("processed_root", "outputs/processed_data")
     load_similarity_seq = cfg.dataset.get("load_similarity_seq", False)
+    load_cluster_sizes = cfg.dataset.get("load_cluster_sizes", False)
 
     dataset = Dataset(
         name=cfg.dataset.name,
@@ -122,6 +138,8 @@ def create_dataset(split, cfg):
         centroid_suffix=centroid_suffix,
         processed_root=processed_root,
         load_similarity_seq=load_similarity_seq,
+        load_cluster_sizes=load_cluster_sizes,
+        cfg=cfg,
     )
 
     return dataset
