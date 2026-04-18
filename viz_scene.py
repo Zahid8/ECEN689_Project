@@ -12,6 +12,7 @@ from preprocess_centroids import (
     run_dynamic_clustering_scene,
 )
 from utils.data import resolve_motsynth_root
+from utils.plotting import prepare_matplotlib
 from utils.run_logging import finalize_run_logging, start_run_logging
 
 
@@ -84,16 +85,7 @@ def parse_args():
 
 
 def _prepare_matplotlib():
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except Exception as exc:
-        raise RuntimeError(
-            "matplotlib is required for viz_scene.py. Install it with: pip install matplotlib"
-        ) from exc
-    return plt
+    return prepare_matplotlib(use_agg=True)
 
 
 def parse_scene_ids(scenes_arg: str) -> List[str]:

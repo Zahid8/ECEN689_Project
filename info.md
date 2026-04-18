@@ -10,6 +10,7 @@ This document is a full technical implementation record for the work added to th
 6. Automated raw-vs-centroid benchmarking with metrics/CSV/plots
 7. Automated checkpoint-vs-checkpoint benchmarking (baseline vs candidate)
 8. Comprehensive raw-vs-centroid visualization package generation for slides (`viz.py`)
+9. Shared plotting backend for benchmark/report charts (`utils/plotting.py`)
 
 ---
 
@@ -36,7 +37,8 @@ The centroid path is implemented in `preprocess_centroids.py` and integrated suc
 6. `viz_scene.py`
 7. `viz_agent.py`
 8. `viz_agent.ipynb`
-9. `info.md` (this document)
+9. `utils/plotting.py`
+10. `info.md` (this document)
 
 ### Modified files
 
@@ -814,6 +816,7 @@ In `outputs/comparison/raw_vs_centroid_<timestamp>/`:
 5. `fde_vs_shot_raw_vs_centroid.png`
 6. `ade_improve_pct_vs_shot.png`
 7. `fde_improve_pct_vs_shot.png`
+8. plots are generated via shared backend in `utils/plotting.py`
 
 ### Logging
 
@@ -870,12 +873,33 @@ In `outputs/comparison/checkpoint_vs_checkpoint_<timestamp>/`:
    2. FDE vs shot
    3. ADE improvement % vs shot
    4. FDE improvement % vs shot
+5. metric plots are generated via shared backend in `utils/plotting.py`
 
 ### Logging
 
 Automatic run log:
 
 1. `outputs/logs/compare_checkpoints_<timestamp>.log`
+
+---
+## 12.1) Shared Plotting Backend (`utils/plotting.py`)
+
+Purpose: central charting backend so benchmark plots follow one implementation path.
+
+Functions:
+
+1. `prepare_matplotlib(use_agg=True)`
+2. `_ensure_parent_dirs(paths)`
+3. `plot_metric_lines(...)`
+4. `plot_metric_improvement(...)`
+
+Integrated in:
+
+1. `compare_raw_vs_centroid.py`
+2. `compare_checkpoints.py`
+3. `viz_agent.py` (`prepare_matplotlib` import)
+4. `viz_scene.py` (`prepare_matplotlib` import)
+5. `viz.py` (`prepare_matplotlib` import)
 
 ---
 

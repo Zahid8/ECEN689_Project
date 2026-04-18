@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import torch
 
+from utils.plotting import prepare_matplotlib
 from utils.run_logging import finalize_run_logging, start_run_logging
 
 
@@ -59,10 +60,7 @@ def parse_args():
 
 def _prepare_matplotlib():
     try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        plt = prepare_matplotlib(use_agg=True)
         from matplotlib.backends.backend_pdf import PdfPages
     except Exception as exc:
         raise RuntimeError(

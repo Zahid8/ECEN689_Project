@@ -20,6 +20,7 @@ This repository extends the original TrajICL pipeline with a production-ready ce
 - Full terminal log capture for all major scripts (`outputs/logs/*.log`)
 - Raw-vs-centroid benchmark script (`compare_raw_vs_centroid.py`)
 - Checkpoint-vs-checkpoint benchmark script (`compare_checkpoints.py`)
+- Shared plotting backend (`utils/plotting.py`) used by benchmark/report/visualization scripts
 - Slide-ready visualization package generator (`viz.py`)
 - Annotation-scene visualization generator (`viz_scene.py`) for direct scene ids (e.g. `000`, `001`)
 - CrowdCluster-style raw-vs-cluster visualizer (`viz_agent.py`) + notebook (`viz_agent.ipynb`)
@@ -99,6 +100,11 @@ python compare_checkpoints.py \
   --shots 0,2,4,8 \
   --device cuda
 ```
+
+Benchmark/report plotting now routes through the same backend (`utils/plotting.py`), so chart style/formatting is consistent across:
+- `compare_raw_vs_centroid.py`
+- `compare_checkpoints.py`
+- `viz.py`, `viz_scene.py`, and `viz_agent.py` (matplotlib setup path)
 
 ## Visualization (For Slides)
 ```bash

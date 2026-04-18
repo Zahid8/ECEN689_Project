@@ -10,6 +10,7 @@ import pandas as pd
 
 from preprocess_centroids import build_centroid_tracks_from_clusters, run_dynamic_clustering_scene
 from utils.data import make_motsynth_df, resolve_motsynth_root
+from utils.plotting import prepare_matplotlib
 from utils.run_logging import finalize_run_logging, start_run_logging
 
 
@@ -23,20 +24,6 @@ class PlotConfig:
     temporary_recluster_min_size: int = 10
     cluster_empty_tolerance: int = 3
     centroid_update_interval: int = 1
-
-
-def _prepare_matplotlib(use_agg: bool = True):
-    try:
-        import matplotlib
-
-        if use_agg:
-            matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except Exception as exc:
-        raise RuntimeError(
-            "matplotlib is required for viz_agent.py. Install it with: pip install matplotlib"
-        ) from exc
-    return plt
 
 
 def _load_raw_bbox_centers(scene_id: str, data_dir: str, start: int, finish: int) -> Tuple[pd.DataFrame, str]:
@@ -131,7 +118,7 @@ def _plot_raw_vs_cluster(
     out_path: str,
     show_plot: bool,
 ) -> None:
-    plt = _prepare_matplotlib(use_agg=not show_plot)
+    plt = prepare_matplotlib(use_agg=not show_plot)
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     ax_raw, ax_cluster = axes
 

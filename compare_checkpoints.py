@@ -6,6 +6,8 @@ import re
 from datetime import datetime
 from typing import Dict, List
 
+from utils.plotting import plot_metric_improvement, plot_metric_lines
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -130,43 +132,6 @@ def save_csv(path: str, rows: List[Dict[str, object]], fieldnames: List[str]):
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
-
-
-def plot_lines(shots, baseline_vals, candidate_vals, ylabel, title, baseline_label, candidate_label, out_paths):
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plt.figure(figsize=(8, 5))
-    plt.plot(shots, baseline_vals, marker="o", linewidth=2, label=baseline_label)
-    plt.plot(shots, candidate_vals, marker="o", linewidth=2, label=candidate_label)
-    plt.xlabel("num_example (shot)")
-    plt.ylabel(ylabel)
-    plt.title(title)
-    plt.grid(True, alpha=0.25)
-    plt.legend()
-    for p in out_paths:
-        plt.savefig(p, bbox_inches="tight", dpi=150)
-    plt.close()
-
-
-def plot_improvement(shots, improves, ylabel, title, out_paths):
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plt.figure(figsize=(8, 5))
-    plt.bar([str(s) for s in shots], improves)
-    plt.axhline(0.0, color="black", linewidth=1)
-    plt.xlabel("num_example (shot)")
-    plt.ylabel(ylabel)
-    plt.title(title)
-    plt.grid(True, axis="y", alpha=0.25)
-    for p in out_paths:
-        plt.savefig(p, bbox_inches="tight", dpi=150)
-    plt.close()
 
 
 def main():
@@ -370,7 +335,7 @@ def main():
             ]
 
             title_suffix = f"({pool} pool)"
-            plot_lines(
+            plot_metric_lines(
                 shots,
                 baseline_ade,
                 candidate_ade,
@@ -380,7 +345,7 @@ def main():
                 args.candidate_label,
                 ade_paths,
             )
-            plot_lines(
+            plot_metric_lines(
                 shots,
                 baseline_fde,
                 candidate_fde,
@@ -390,14 +355,14 @@ def main():
                 args.candidate_label,
                 fde_paths,
             )
-            plot_improvement(
+            plot_metric_improvement(
                 shots,
                 ade_improve,
                 "ADE Improvement (%)",
                 f"{args.candidate_label} vs {args.baseline_label} ADE {title_suffix}",
                 ade_imp_paths,
             )
-            plot_improvement(
+            plot_metric_improvement(
                 shots,
                 fde_improve,
                 "FDE Improvement (%)",
