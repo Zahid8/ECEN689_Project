@@ -12,6 +12,7 @@ from preprocess_centroids import (
     run_dynamic_clustering_scene,
 )
 from utils.data import resolve_motsynth_root
+from utils.plotting import get_distinct_colors, prepare_matplotlib
 from utils.run_logging import finalize_run_logging, start_run_logging
 
 
@@ -84,16 +85,7 @@ def parse_args():
 
 
 def _prepare_matplotlib():
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except Exception as exc:
-        raise RuntimeError(
-            "matplotlib is required for viz_scene.py. Install it with: pip install matplotlib"
-        ) from exc
-    return plt
+    return prepare_matplotlib(use_agg=True)
 
 
 def parse_scene_ids(scenes_arg: str) -> List[str]:
@@ -188,7 +180,7 @@ def save_scene_plot(
 
     fig, axes = plt.subplots(1, 2, figsize=(17, 7))
 
-    raw_cmap = plt.cm.get_cmap("hsv", max(1, len(raw_ids)))
+    raw_colors = get_distinct_colors(len(raw_ids))
     for i, pid in enumerate(raw_ids):
         d = raw_df[raw_df["id"] == pid].sort_values("frame")
         if len(d) < 2:
@@ -198,10 +190,10 @@ def save_scene_plot(
             d["cy"].to_numpy(),
             linewidth=1.0,
             alpha=0.9,
-            color=raw_cmap(i),
+            color=raw_colors[i],
         )
 
-    cen_cmap = plt.cm.get_cmap("hsv", max(1, len(centroid_ids)))
+    cen_colors = get_distinct_colors(len(centroid_ids))
     for i, _cid in enumerate(centroid_ids):
         valid = np.where(centroid_masks[i] > 0)[0]
         if len(valid) < 2:
@@ -212,7 +204,7 @@ def save_scene_plot(
             xy[:, 1],
             linewidth=1.2,
             alpha=0.95,
-            color=cen_cmap(i),
+            color=cen_colors[i],
         )
 
     raw_pts = scene_points_from_tracks(raw_tracks[:, :, 0, :], raw_masks[:, :, 0])

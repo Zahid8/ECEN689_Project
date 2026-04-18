@@ -1,31 +1,30 @@
-<div align="center">
+# TrajICL with Dynamic-Centroid Example Pool
 
-# TrajICL + Dynamic-Centroid Extension
+This repository extends the TrajICL pipeline with a centroid-based example-pool construction path for dense crowd trajectory modeling. The objective is to preserve the original TrajICL training and inference interface while enabling an alternative preprocessing mode where individual pedestrian trajectories are transformed into dynamically maintained cluster-centroid trajectories.
 
-Official TrajICL foundation: **Towards Predicting Any Human Trajectory In Context (NeurIPS 2025)**  
-Paper: https://arxiv.org/abs/2506.00871
+The centroid construction follows the dynamic clustering framework from *Efficient Dense Crowd Trajectory Prediction Via Dynamic Clustering*: nested direction/location agglomerative clustering, periodic LOF-based reassignment, temporary-pool reclustering, and delta-based centroid trajectory propagation under membership changes.
 
-</div>
+## Scope of This Extension
 
-## Overview
-This repository extends the original TrajICL pipeline with a production-ready centroid-based data path for dense crowd trajectory modeling. The core objective is to keep the TrajICL model and example-selection flow intact while enabling a second preprocessing mode that converts raw multi-pedestrian tracks into dynamically maintained centroid tracks using nested direction/location clustering, LOF-based reassignment, temporary-pool reclustering, and delta-updated centroid trajectories. In practice, this gives you two interchangeable example pools (`raw` and `centroid`) under the same training/evaluation interface, plus full benchmarking and visualization tooling for direct performance and data-behavior comparison.
-
-## What This Fork Adds
-- Dynamic-clustering centroid preprocessing (`preprocess_centroids.py`)
-- Config switch for example pool type (`raw` or `centroid`)
-- Automatic dataset discovery from `dataset/` layout
-- Deterministic checkpoint directories:
+- Adds a centroid preprocessing entry point: `preprocess_centroids.py`
+- Keeps the original raw workflow intact (`preprocess.py`, raw pool training/evaluation)
+- Supports runtime switching between:
+  - `dataset.example_pool_type=raw`
+  - `dataset.example_pool_type=centroid`
+- Stores checkpoints separately for clean comparison:
   - `outputs/TrajICL/raw/`
   - `outputs/TrajICL/centroid/`
-- Full terminal log capture for all major scripts (`outputs/logs/*.log`)
-- Raw-vs-centroid benchmark script (`compare_raw_vs_centroid.py`)
-- Checkpoint-vs-checkpoint benchmark script (`compare_checkpoints.py`)
-- Slide-ready visualization package generator (`viz.py`)
-- Annotation-scene visualization generator (`viz_scene.py`) for direct scene ids (e.g. `000`, `001`)
 
-## Quick Start
+## Dataset Layout
 
-### 1) Environment
+Expected dataset location for MOTSynth annotations:
+
+`dataset/mot_annotations/<scene_id>/gt/gt.txt`
+
+The code resolves dataset roots automatically from repository-local dataset structure.
+
+## Environment Setup
+
 ```bash
 cd ~/Projects/TrajICL
 python -m venv .venv
@@ -33,59 +32,67 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2) Data Assumption
-Expected MOTSynth annotation structure:
-- `dataset/mot_annotations/<scene_id>/gt/gt.txt`
+## End-to-End Workflow
 
-### 3) Build Processed Pools
-Raw pool:
+### 1) Build Raw Processed Pool
+
 ```bash
 python preprocess.py --name motsynth --stage all
 ```
 
-Centroid pool:
+### 2) Build Centroid Processed Pool
+
 ```bash
 python preprocess_centroids.py --name motsynth --stage all
 ```
 
-### 4) Train
-Raw checkpoint target:
-- `outputs/TrajICL/raw/best_val_checkpoint.pth.tar`
+Paper-aligned defaults used by centroid preprocessing:
+- direction threshold: `50` degrees
+- location threshold: `120` pixels
+- LOF contamination: `0.2`
+- LOF neighbor ratio: `0.8`
+- cluster re-evaluation interval: `10` frames
+- temporary recluster minimum size: `10`
+- centroid delta update interval: `10` frames
+
+### 3) Train (Raw Pool)
 
 ```bash
 python train.py -m dataset.name=motsynth dataset.example_pool_type=raw
 ```
 
-Centroid checkpoint target:
-- `outputs/TrajICL/centroid/best_val_checkpoint.pth.tar`
+Primary checkpoint target:
+`outputs/TrajICL/raw/best_val_checkpoint.pth.tar`
+
+### 4) Train (Centroid Pool)
 
 ```bash
 python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
 ```
 
+Primary checkpoint target:
+`outputs/TrajICL/centroid/best_val_checkpoint.pth.tar`
+
 ### 5) Evaluate
+
 Raw:
 ```bash
-python eval.py --model_path outputs/TrajICL/raw/best_val_checkpoint.pth.tar --dataset_name motsynth --example_pool_type raw
+python eval.py \
+  --model_path outputs/TrajICL/raw/best_val_checkpoint.pth.tar \
+  --dataset_name motsynth \
+  --example_pool_type raw
 ```
 
 Centroid:
 ```bash
-python eval.py --model_path outputs/TrajICL/centroid/best_val_checkpoint.pth.tar --dataset_name motsynth --example_pool_type centroid
-```
-
-## Benchmarking
-
-### A) Same checkpoint, different pools
-```bash
-python compare_raw_vs_centroid.py \
+python eval.py \
   --model_path outputs/TrajICL/centroid/best_val_checkpoint.pth.tar \
   --dataset_name motsynth \
-  --prompting_method sim \
-  --device cuda
+  --example_pool_type centroid
 ```
 
-### B) Two checkpoints in one report (baseline vs candidate)
+## Benchmarking: Raw vs Centroid Models
+
 ```bash
 python compare_checkpoints.py \
   --baseline_model_path outputs/TrajICL/raw/best_val_checkpoint.pth.tar \
@@ -99,103 +106,22 @@ python compare_checkpoints.py \
   --device cuda
 ```
 
-## Visualization (For Slides)
-```bash
-python viz.py \
-  --raw_dir outputs/processed_data/motsynth \
-  --centroid_dir outputs/processed_data/motsynth_centroid \
-  --split train \
-  --num_samples 10 \
-  --pair_coordinate_mode both
-```
+## Output Structure
 
-Artifacts are saved under:
-- `outputs/visualizations/raw_vs_centroid_<timestamp>/`
-
-Figure interpretation:
-- `00_before_vs_after_raw_vs_centroid.png` and `03_raw_vs_centroid_pairs.png` are now metadata-matched (`centroid_metadata[*].source_sample_index`) so raw and centroid panels come from the same source sample.
-- By default (`--pair_coordinate_mode both`), paired plots are exported in two variants:
-  - absolute coordinates:
-    - `00_before_vs_after_raw_vs_centroid.png`
-    - `03_raw_vs_centroid_pairs.png`
-  - normalized coordinates (shape-focused):
-    - `00_before_vs_after_raw_vs_centroid_normalized.png`
-    - `03_raw_vs_centroid_pairs_normalized.png`
-- Absolute mode is best for validating whether centroid tracks are spatially plausible in the original scene.
-- Normalized mode is best for trajectory-shape comparison independent of global translation.
-- `01_raw_samples_grid.png` and `02_centroid_samples_grid.png` are independent sample grids for each representation (not one-to-one pairs).
-- Color semantics in all trajectory panels:
-  - blue = primary trajectory
-  - orange = context trajectories
-  - solid = history
-  - dashed = future
-
-If centroid trajectories appear as staircase/dot-only artifacts, regenerate centroid processed data with the current `preprocess_centroids.py` (older centroid outputs may still contain stale held-position behavior):
-```bash
-python preprocess_centroids.py --name motsynth --stage all
-```
-
-## Annotation Scene Visualization (No Sample Indices)
-To visualize raw vs centroid trajectories directly from annotation scene ids:
-```bash
-python viz_scene.py \
-  --scenes 000,001 \
-  --data_dir dataset \
-  --n_agents 57 \
-  --n_clusters 32
-```
-
-Optional filtering/subsampling:
-```bash
-python viz_scene.py \
-  --scenes 000 \
-  --data_dir dataset \
-  --frame_step 1 \
-  --min_track_len 1 \
-  --n_agents 57 \
-  --n_clusters 32
-```
-
-This reads from:
-- `dataset/mot_annotations/<scene_id>/gt/gt.txt`
-
-Outputs per scene are saved under:
-- `outputs/visualizations/scene_annotations_<timestamp>/`
-- `<scene>_raw_vs_centroid.png`
-- `<scene>_raw_tracks.csv`
-- `<scene>_centroid_tracks.csv`
-- `<scene>_centroid_metadata.json`
-- `manifest.json`
-
-Notes:
-- `--n_agents` controls how many raw agent trajectories are plotted/exported per scene (top-ranked by trajectory support length); use `0` to keep all.
-- `--n_clusters` controls how many centroid trajectories are plotted/exported per scene (top-ranked by trajectory support score); use `0` to keep all.
-- Colors are unique per raw agent id and unique per plotted centroid cluster in each scene panel.
-
-## Output Layout
-- `outputs/processed_data/` -> raw/centroid processed datasets
+- `outputs/processed_data/motsynth/` -> raw processed pool
+- `outputs/processed_data/motsynth_centroid/` -> centroid processed pool
 - `outputs/TrajICL/raw/` -> raw-model checkpoints
 - `outputs/TrajICL/centroid/` -> centroid-model checkpoints
 - `outputs/comparison/` -> benchmark reports
-- `outputs/visualizations/` -> visualization reports
-- `outputs/logs/` -> terminal logs
-- `outputs/plots/`, `outputs/graphs/` -> exported plot copies
+- `outputs/logs/` -> captured run logs
 
-## Common Stability Overrides
-If training is killed due to memory pressure:
-```bash
-python train.py -m \
-  dataset.name=motsynth \
-  dataset.example_pool_type=centroid \
-  dataset.load_similarity_seq=false \
-  training.num_workers=0 \
-  training.batch_size=8 \
-  wandb=False
-```
+## Notes for Reproducibility
 
-## Documentation
-- `details.md` -> full end-to-end operational guide
-- `info.md` -> technical implementation notes, function-level details, and interpretation notes
+- If centroid preprocessing logic changes, regenerate centroid processed data before training/evaluation.
+- Raw and centroid checkpoints should be trained/evaluated with matched hyperparameters for fair comparison.
+- If runs are terminated by OOM (`Killed`), reduce worker count and batch size.
 
-## Acknowledgement
-This codebase builds on the original TrajICL release and its cited upstream dependencies.
+## Upstream References
+
+- TrajICL foundation: *[Towards Predicting Any Human Trajectory In Context](https://arxiv.org/abs/2506.00871)* (NeurIPS 2025)
+- Dynamic clustering reference: *[Efficient Dense Crowd Trajectory Prediction Via Dynamic Clustering](https://arxiv.org/abs/2603.18166)*

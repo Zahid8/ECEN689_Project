@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import torch
 
+from utils.plotting import SCIENTIFIC_COLORS, prepare_matplotlib
 from utils.run_logging import finalize_run_logging, start_run_logging
 
 
@@ -59,10 +60,7 @@ def parse_args():
 
 def _prepare_matplotlib():
     try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        plt = prepare_matplotlib(use_agg=True)
         from matplotlib.backends.backend_pdf import PdfPages
     except Exception as exc:
         raise RuntimeError(
@@ -289,9 +287,11 @@ def _plot_agent_trajectories(
 ):
     n_agents = xy.shape[0]
     show_agents = min(n_agents, max_agents)
+    primary_color = SCIENTIFIC_COLORS["blue"]
+    context_color = SCIENTIFIC_COLORS["orange"]
 
     for agent in range(show_agents):
-        color = "C0" if agent == 0 else "C1"
+        color = primary_color if agent == 0 else context_color
         alpha = 0.9 if agent == 0 else 0.35
         lw = 1.8 if agent == 0 else 0.8
 
@@ -492,8 +492,8 @@ def make_before_after_figure(
 def save_hist_compare(raw_vals, cen_vals, xlabel, title, out_path, bins=40):
     plt, _ = _prepare_matplotlib()
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.hist(raw_vals, bins=bins, alpha=0.55, label="raw")
-    ax.hist(cen_vals, bins=bins, alpha=0.55, label="centroid")
+    ax.hist(raw_vals, bins=bins, alpha=0.55, label="raw", color=SCIENTIFIC_COLORS["blue"])
+    ax.hist(cen_vals, bins=bins, alpha=0.55, label="centroid", color=SCIENTIFIC_COLORS["orange"])
     ax.set_xlabel(xlabel)
     ax.set_title(title)
     ax.grid(True, alpha=0.2)
@@ -506,7 +506,11 @@ def save_hist_compare(raw_vals, cen_vals, xlabel, title, out_path, bins=40):
 def save_box_compare(raw_vals, cen_vals, ylabel, title, out_path):
     plt, _ = _prepare_matplotlib()
     fig, ax = plt.subplots(figsize=(7, 5))
-    ax.boxplot([raw_vals, cen_vals], labels=["raw", "centroid"], showfliers=False)
+    bp = ax.boxplot([raw_vals, cen_vals], labels=["raw", "centroid"], showfliers=False, patch_artist=True)
+    colors = [SCIENTIFIC_COLORS["blue"], SCIENTIFIC_COLORS["orange"]]
+    for patch, color in zip(bp["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.35)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     ax.grid(True, axis="y", alpha=0.2)
@@ -526,7 +530,7 @@ def save_heatmap(points, title, out_path):
         plt.close(fig)
         return
 
-    hb = ax.hexbin(points[:, 0], points[:, 1], gridsize=70, mincnt=1, bins="log")
+    hb = ax.hexbin(points[:, 0], points[:, 1], gridsize=70, mincnt=1, bins="log", cmap="cividis")
     fig.colorbar(hb, ax=ax, label="log-density")
     ax.set_title(title)
     ax.set_aspect("equal", adjustable="box")
@@ -540,9 +544,9 @@ def save_mean_speed_curve(raw_curve, cen_curve, hist_len, out_path):
     plt, _ = _prepare_matplotlib()
     t = np.arange(1, len(raw_curve) + 1)
     fig, ax = plt.subplots(figsize=(9, 5))
-    ax.plot(t, raw_curve, label="raw", linewidth=2)
-    ax.plot(t, cen_curve, label="centroid", linewidth=2)
-    ax.axvline(hist_len, linestyle="--", color="k", alpha=0.5, linewidth=1)
+    ax.plot(t, raw_curve, label="raw", linewidth=2.2, color=SCIENTIFIC_COLORS["blue"])
+    ax.plot(t, cen_curve, label="centroid", linewidth=2.2, color=SCIENTIFIC_COLORS["orange"])
+    ax.axvline(hist_len, linestyle="--", color=SCIENTIFIC_COLORS["gray"], alpha=0.7, linewidth=1.2)
     ax.set_xlabel("Timestep transition t->t+1")
     ax.set_ylabel("Mean primary speed")
     ax.set_title("Mean Primary Speed by Timestep")

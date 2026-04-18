@@ -10,6 +10,7 @@ This document is a full technical implementation record for the work added to th
 6. Automated raw-vs-centroid benchmarking with metrics/CSV/plots
 7. Automated checkpoint-vs-checkpoint benchmarking (baseline vs candidate)
 8. Comprehensive raw-vs-centroid visualization package generation for slides (`viz.py`)
+9. Shared plotting backend for benchmark/report charts (`utils/plotting.py`)
 
 ---
 
@@ -34,7 +35,10 @@ The centroid path is implemented in `preprocess_centroids.py` and integrated suc
 4. `compare_checkpoints.py`
 5. `viz.py`
 6. `viz_scene.py`
-7. `info.md` (this document)
+7. `viz_agent.py`
+8. `viz_agent.ipynb`
+9. `utils/plotting.py`
+10. `info.md` (this document)
 
 ### Modified files
 
@@ -678,6 +682,30 @@ Purpose: visualize raw vs centroid trajectories by annotation scene id (for exam
    2. `N>0` keeps top `N` centroid tracks (ranked by `track_length * cluster_size`) for plotting/export
 10. uses one distinct color per raw agent id and one distinct color per plotted centroid cluster
 
+### `viz_agent.py` + `viz_agent.ipynb`
+
+Purpose: side-by-side raw-vs-cluster visualization with CrowdCluster-like plotting style.
+
+1. `viz_agent.py` reads one MOTSynth scene window:
+   1. scene id (`--scene_id`)
+   2. frame window (`--start`, `--finish`)
+2. raw panel uses bbox-center trajectories from `gt.txt`:
+   1. `x = bb_center_x`
+   2. `y = bb_center_y`
+3. clustering backend is our integrated dynamic clustering runtime:
+   1. `run_dynamic_clustering_scene`
+   2. `build_centroid_tracks_from_clusters`
+4. plot output style:
+   1. left panel = raw trajectories, one color per raw pedestrian id
+   2. right panel = cluster trajectories, one color per cluster id
+5. exports per run:
+   1. raw CSV
+   2. cluster CSV
+   3. cluster metadata JSON
+   4. summary JSON
+   5. optional side-by-side PNG
+6. `viz_agent.ipynb` now calls `run_plot_pipeline(...)` directly, so notebook visuals and CLI visuals stay consistent
+
 ---
 
 ## 10) Visualization Interpretation Notes (`viz.py` outputs)
@@ -788,6 +816,7 @@ In `outputs/comparison/raw_vs_centroid_<timestamp>/`:
 5. `fde_vs_shot_raw_vs_centroid.png`
 6. `ade_improve_pct_vs_shot.png`
 7. `fde_improve_pct_vs_shot.png`
+8. plots are generated via shared backend in `utils/plotting.py`
 
 ### Logging
 
@@ -844,12 +873,42 @@ In `outputs/comparison/checkpoint_vs_checkpoint_<timestamp>/`:
    2. FDE vs shot
    3. ADE improvement % vs shot
    4. FDE improvement % vs shot
+5. metric plots are generated via shared backend in `utils/plotting.py`
 
 ### Logging
 
 Automatic run log:
 
 1. `outputs/logs/compare_checkpoints_<timestamp>.log`
+
+---
+## 12.1) Shared Plotting Backend (`utils/plotting.py`)
+
+Purpose: central charting backend so benchmark plots follow one implementation path.
+
+Functions:
+
+1. `prepare_matplotlib(use_agg=True)`
+   1. applies SciencePlots styles when available: `science + no-latex + bright + grid`
+   2. falls back to safe Matplotlib defaults if SciencePlots is unavailable
+2. `_ensure_parent_dirs(paths)`
+3. `plot_metric_lines(...)`
+4. `plot_metric_improvement(...)`
+
+Integrated in:
+
+1. `compare_raw_vs_centroid.py`
+2. `compare_checkpoints.py`
+3. `viz_agent.py` (`prepare_matplotlib` import)
+4. `viz_scene.py` (`prepare_matplotlib` import)
+5. `viz.py` (`prepare_matplotlib` import)
+
+Palette behavior:
+
+1. scientific constants in `SCIENTIFIC_COLORS` enforce consistent role-to-color mapping
+2. `plot_metric_lines(...)` uses blue/orange for left/right series
+3. `plot_metric_improvement(...)` uses green for positive improvement and red for negative
+4. `get_distinct_colors(count)` provides readable qualitative colors for dense multi-trajectory scene plots (replacing previous HSV rainbow usage in scene visualizers/notebook)
 
 ---
 
@@ -863,6 +922,7 @@ Automatic run log:
    2. `training.num_workers=0`
    3. lower `training.batch_size`
 5. `viz.py` requires matplotlib at execution time; install with `pip install matplotlib` if missing.
+6. For professional chart styling across benchmark/visualization outputs, install `SciencePlots` (`pip install SciencePlots`).
 
 ---
 

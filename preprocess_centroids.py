@@ -525,10 +525,7 @@ def run_dynamic_clustering_scene(
     cluster_empty_tolerance: int,
     centroid_update_interval: int,
 ):
-    # Retained for backward CLI/config compatibility. Centroid delta update is
-    # applied per frame based on Eq. (3)-(4); membership re-evaluation cadence
-    # is controlled by `reeval_interval`.
-    _ = centroid_update_interval
+    centroid_update_interval = max(1, int(centroid_update_interval))
 
     num_pedestrians, seq_len, _, _ = scene_traj.shape
     track_xy = scene_traj[:, :, 0, :2].astype(np.float32)
@@ -622,12 +619,12 @@ def run_dynamic_clustering_scene(
                         cluster.centroid_by_frame[frame_idx] = initialize_centroid(members_now, active_states)
                     continue
 
-                # Paper Eq. (3)-(4) defines centroid update from t-1 -> t displacement.
-                # We therefore propagate centroid every frame via average member delta
-                # (while membership itself is re-evaluated every `reeval_interval`).
-                # This avoids staircase-like trajectories from holding positions for
-                # multiple frames and better matches Figure 2 behavior.
-                if members_now:
+                # Paper-aligned centroid update cadence:
+                # update centroid only every `centroid_update_interval` frames
+                # using Eq. (3)-(4) delta from (t-1 -> t). Otherwise keep previous
+                # centroid location to avoid recomputing raw means each frame.
+                should_update_centroid = (frame_idx % centroid_update_interval) == 0
+                if members_now and should_update_centroid:
                     updated_centroid = update_centroid_with_delta(
                         prev_centroid_xy=prev_centroid,
                         cluster_members_curr=members_now,
@@ -1106,10 +1103,10 @@ def main():
     parser.add_argument(
         "--centroid_update_interval",
         type=int,
-        default=1,
+        default=10,
         help=(
-            "Deprecated compatibility flag. Centroid delta update is computed "
-            "per frame; cluster membership re-evaluation uses --reeval_interval."
+            "Centroid delta-update interval (frames). "
+            "Paper default is 10."
         ),
     )
 
