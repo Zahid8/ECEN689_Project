@@ -98,7 +98,7 @@ def main():
         cfg.dataset.example_pool_type = args.example_pool_type
 
         cfg.dataset.prompting = args.prompting_method
-        cfg.dataset.load_cluster_sizes  = (args.prompting_method == "weighted_stes")
+        cfg.dataset.load_cluster_sizes = (args.prompting_method == "weighted_stes")
 
         if args.prompting_method == "weighted_stes" and args.example_pool_type == "raw":
             warnings.warn("--prompting_method=weighted_stes and --example_pool_type=raw both specified")

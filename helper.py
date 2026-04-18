@@ -10,6 +10,56 @@ from dataset import batch_process_coords, collate_batch, create_dataset
 from loss import compute_multi_loss
 from utils.utils import AverageMeter, save_checkpoint, update_stats
 
+import random
+
+# cluster weight function w = f(|C_i|)
+def cluster_size_to_weight(size, alpha=1.0): # can add other weight functions here later
+    return 1.0 + alpha * float(np.log(size))
+
+# weighted STES score 
+# S_x(X_1, C~_i) = w_i * S(X_1, C_i)
+def select_examples_weighted_stes(query_idx, stes_candidates_sorted, cluster_sizes, num_example, 
+                                  topk_window=32, alpha=1.0, temperature=1.0, stes_scores=None):
+    if num_example <= 0 or not stes_candidates_sorted:
+        return []
+
+    n = min(max(topk_window, num_example), len(stes_candidates_sorted))
+    window = stes_candidates_sorted[:n]
+
+    if stes_scores is not None and query_idx in stes_scores:
+        S = np.asarray(stes_scores[query_idx][:n], dtype=np.float64)
+    else:
+        ranks = np.arange(n, 0, -1, dtype=np.float64)
+        S = ranks / ranks.max()
+
+    if cluster_sizes is None:
+        w = np.ones(n, dtype=np.float64)
+    else:
+        sizes = np.array(
+            [cluster_sizes.get(i, 0) for i in window], dtype=np.float64
+        )
+        max_size = sizes.max() if sizes.size else 1.0
+        w = np.array([cluster_size_to_weight(s, alpha) for s in sizes], dtype=np.float64)
+
+    S_w = w * S
+    order = np.argsort(-S_w, kind="stable")[:num_example]
+    picked = [window[i] for i in order]
+
+    return picked[::-1]
+
+def build_example_selector(cfg, cluster_sizes=None, stes_scores=None):
+
+    method = cfg.dataset.prompting
+    num_example = int(cfg.dataset.num_example)
+
+    def selector(query_idx, candidates):
+        if method == "sim":
+            k = min(num_example, len(candidates))
+            return candidates[:k][::-1]
+        elif method == "weighted_stes":
+            return select_examples_weighted_stes(query_idx, candidates, cluster_sizes, num_example, stes_scores=stes_scores)
+
+    return selector
 
 def train(
     cfg,
