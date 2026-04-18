@@ -889,6 +889,8 @@ Purpose: central charting backend so benchmark plots follow one implementation p
 Functions:
 
 1. `prepare_matplotlib(use_agg=True)`
+   1. applies SciencePlots styles when available: `science + no-latex + bright + grid`
+   2. falls back to safe Matplotlib defaults if SciencePlots is unavailable
 2. `_ensure_parent_dirs(paths)`
 3. `plot_metric_lines(...)`
 4. `plot_metric_improvement(...)`
@@ -913,6 +915,7 @@ Integrated in:
    2. `training.num_workers=0`
    3. lower `training.batch_size`
 5. `viz.py` requires matplotlib at execution time; install with `pip install matplotlib` if missing.
+6. For professional chart styling across benchmark/visualization outputs, install `SciencePlots` (`pip install SciencePlots`).
 
 ---
 

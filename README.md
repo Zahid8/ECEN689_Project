@@ -21,6 +21,7 @@ This repository extends the original TrajICL pipeline with a production-ready ce
 - Raw-vs-centroid benchmark script (`compare_raw_vs_centroid.py`)
 - Checkpoint-vs-checkpoint benchmark script (`compare_checkpoints.py`)
 - Shared plotting backend (`utils/plotting.py`) used by benchmark/report/visualization scripts
+- Professional plot styling with SciencePlots (`science`, `no-latex`, `bright`, `grid`) via shared backend
 - Slide-ready visualization package generator (`viz.py`)
 - Annotation-scene visualization generator (`viz_scene.py`) for direct scene ids (e.g. `000`, `001`)
 - CrowdCluster-style raw-vs-cluster visualizer (`viz_agent.py`) + notebook (`viz_agent.ipynb`)
@@ -105,6 +106,12 @@ Benchmark/report plotting now routes through the same backend (`utils/plotting.p
 - `compare_raw_vs_centroid.py`
 - `compare_checkpoints.py`
 - `viz.py`, `viz_scene.py`, and `viz_agent.py` (matplotlib setup path)
+
+If `SciencePlots` is installed, the shared plotting backend automatically applies a professional style preset.  
+Install once:
+```bash
+pip install SciencePlots
+```
 
 ## Visualization (For Slides)
 ```bash

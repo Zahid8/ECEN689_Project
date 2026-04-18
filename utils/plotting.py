@@ -1,5 +1,37 @@
 import os
+import warnings
 from typing import Iterable, Sequence
+
+SCIENCE_STYLE_STACK = ("science", "no-latex", "bright", "grid")
+
+
+def _apply_professional_style(plt) -> None:
+    # Prefer SciencePlots if available; gracefully fall back to sane defaults.
+    try:
+        import scienceplots  # noqa: F401
+
+        plt.style.use(list(SCIENCE_STYLE_STACK))
+        return
+    except Exception:
+        pass
+
+    warnings.warn(
+        "SciencePlots style was not applied. Falling back to Matplotlib defaults.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    plt.style.use("default")
+    plt.rcParams.update(
+        {
+            "figure.dpi": 120,
+            "savefig.dpi": 150,
+            "axes.grid": True,
+            "grid.alpha": 0.25,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "font.size": 11,
+        }
+    )
 
 
 def prepare_matplotlib(use_agg: bool = True):
@@ -13,6 +45,7 @@ def prepare_matplotlib(use_agg: bool = True):
         raise RuntimeError(
             "matplotlib is required for plotting. Install it with: pip install matplotlib"
         ) from exc
+    _apply_professional_style(plt)
     return plt
 
 
