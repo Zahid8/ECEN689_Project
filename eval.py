@@ -45,8 +45,8 @@ def parse_args():
         "--example_pool_type",
         type=str,
         choices=["raw", "centroid"],
-        default="raw",
-        help="Which processed pool to use: raw or centroid.",
+        default="centroid",
+        help="Which processed pool to use: raw or centroid (use 'centroid' with weighted_stes).",
     )
     parser.add_argument("--log_dir", type=str, default="outputs/logs")
     parser.add_argument("--disable_file_logging", action="store_true")
