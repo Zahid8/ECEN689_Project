@@ -1,196 +1,81 @@
 <div align="center">
 
-# TrajICL: End-to-End Guide (Raw + Dynamic-Centroid Example Pools)
+# TrajICL + Dynamic-Centroid Extension
 
-**Original paper:** *Towards Predicting Any Human Trajectory In Context (NeurIPS 2025)*  
-**Paper:** https://arxiv.org/abs/2506.00871
+Official TrajICL foundation: **Towards Predicting Any Human Trajectory In Context (NeurIPS 2025)**  
+Paper: https://arxiv.org/abs/2506.00871
 
 </div>
 
-This repository contains the TrajICL training/evaluation pipeline and an extended preprocessing path that builds centroid-based example pools using dynamic clustering.
+## Overview
+This repository extends the original TrajICL pipeline with a production-ready centroid-based data path for dense crowd trajectory modeling. The core objective is to keep the TrajICL model and example-selection flow intact while enabling a second preprocessing mode that converts raw multi-pedestrian tracks into dynamically maintained centroid tracks using nested direction/location clustering, LOF-based reassignment, temporary-pool reclustering, and delta-updated centroid trajectories. In practice, this gives you two interchangeable example pools (`raw` and `centroid`) under the same training/evaluation interface, plus full benchmarking and visualization tooling for direct performance and data-behavior comparison.
 
-The instructions below are written for the current local setup where data is stored in:
+## What This Fork Adds
+- Dynamic-clustering centroid preprocessing (`preprocess_centroids.py`)
+- Config switch for example pool type (`raw` or `centroid`)
+- Automatic dataset discovery from `dataset/` layout
+- Deterministic checkpoint directories:
+  - `outputs/TrajICL/raw/`
+  - `outputs/TrajICL/centroid/`
+- Full terminal log capture for all major scripts (`outputs/logs/*.log`)
+- Raw-vs-centroid benchmark script (`compare_raw_vs_centroid.py`)
+- Checkpoint-vs-checkpoint benchmark script (`compare_checkpoints.py`)
+- Slide-ready visualization package generator (`viz.py`)
 
-- `TrajICL/dataset`
+## Quick Start
 
----
-
-## What TrajICL Does
-
-TrajICL is an in-context trajectory prediction framework that selects supporting examples from a pool and conditions prediction on those examples at inference/training time.
-
-Core capabilities from the original codebase:
-
-1. Standard trajectory preprocessing
-2. Similarity-based example retrieval
-3. In-context training and evaluation
-
----
-
-## What Is Added in This Repo (Beyond Original)
-
-This branch adds production-ready extensions on top of the original pipeline:
-
-1. **Dynamic-clustering centroid preprocessing** (`preprocess_centroids.py`)
-   - Nested clustering: direction -> location
-   - LOF-based reassignment every 10 frames
-   - Temporary pool re-clustering for new cluster formation
-   - Delta-based centroid trajectory updates
-
-2. **Config-driven pool switching**
-   - `dataset.example_pool_type: raw | centroid`
-   - No model-core redesign required
-
-3. **Automatic dataset resolution from `dataset/`**
-   - MOTSynth annotations are discovered automatically
-   - Split fallback (80/20 train/val) when split text files are missing
-
-4. **Unified output routing under `outputs/`**
-   - Processed data, checkpoints, logs, plots/graphs in one root
-
-5. **Automatic full terminal logging**
-   - `stdout` + `stderr` are captured to timestamped log files for all main entry scripts
-
----
-
-## Environment Setup
-
-From repository root:
-
+### 1) Environment
 ```bash
-cd /home/zahid/Projects/TrajICL
+cd ~/Projects/TrajICL
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
-
-## Dataset Requirements
-
-Expected annotation layout (already present in your setup):
-
+### 2) Data Assumption
+Expected MOTSynth annotation structure:
 - `dataset/mot_annotations/<scene_id>/gt/gt.txt`
 
-The loader resolves MOTSynth from these locations (in order):
-
-1. `<data_dir>/motsynth/mot_annotations/...`
-2. `<data_dir>/mot_annotations/...`
-3. `dataset/mot_annotations/...` (repo-local fallback)
-
-Optional split files (used if present):
-
-- `dataset/motsynth_train.txt`
-- `dataset/motsynth_val.txt`
-
-If split files are missing, deterministic split fallback is applied:
-
-1. first 80% scenes -> train
-2. last 20% scenes -> val
-
----
-
-## End-to-End Run (Recommended)
-
-Run the full raw + centroid pipeline, then train/evaluate with centroid pool:
-
-```bash
-python preprocess.py --name motsynth --stage all
-python preprocess_centroids.py --name motsynth --stage all
-python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
-python eval.py --dataset_name motsynth --example_pool_type centroid
-```
-
----
-
-## Preprocessing Workflows
-
-## 1) Raw example-pool preprocessing
-
+### 3) Build Processed Pools
+Raw pool:
 ```bash
 python preprocess.py --name motsynth --stage all
 ```
 
-Output:
-
-- `outputs/processed_data/motsynth`
-
-## 2) Centroid example-pool preprocessing
-
+Centroid pool:
 ```bash
 python preprocess_centroids.py --name motsynth --stage all
 ```
 
-Output:
-
-- `outputs/processed_data/motsynth_centroid`
-
-Centroid metadata sidecars:
-
-1. `train_centroid_metadata.json`
-2. `val_centroid_metadata.json`
-3. `train_centroid_metadata_by_scene.json`
-4. `val_centroid_metadata_by_scene.json`
-
-### Centroid defaults (paper-aligned)
-
-```bash
---direction_thresh_deg 50
---distance_thresh_px 120
---lof_contamination 0.2
---lof_neighbor_ratio 0.8
---reeval_interval 10
---temporary_recluster_min_size 10
-```
-
----
-
-## Training
-
-## Train with raw pool
+### 4) Train
+Raw checkpoint target:
+- `outputs/TrajICL/raw/best_val_checkpoint.pth.tar`
 
 ```bash
 python train.py -m dataset.name=motsynth dataset.example_pool_type=raw
 ```
 
-## Train with centroid pool
+Centroid checkpoint target:
+- `outputs/TrajICL/centroid/best_val_checkpoint.pth.tar`
 
 ```bash
 python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
 ```
 
----
-
-## Evaluation
-
-## Evaluate with raw pool
-
+### 5) Evaluate
+Raw:
 ```bash
-python eval.py --dataset_name motsynth --example_pool_type raw
+python eval.py --model_path outputs/TrajICL/raw/best_val_checkpoint.pth.tar --dataset_name motsynth --example_pool_type raw
 ```
 
-## Evaluate with centroid pool
-
+Centroid:
 ```bash
-python eval.py --dataset_name motsynth --example_pool_type centroid
+python eval.py --model_path outputs/TrajICL/centroid/best_val_checkpoint.pth.tar --dataset_name motsynth --example_pool_type centroid
 ```
 
----
+## Benchmarking
 
-## Raw vs Centroid Benchmark (Metrics + Plots)
-
-Use the comparison script to evaluate both pool types with the same checkpoint and save a full report.
-
-Prerequisites:
-
-1. raw processed pool exists: `outputs/processed_data/motsynth`
-2. centroid processed pool exists: `outputs/processed_data/motsynth_centroid`
-3. trained checkpoint exists (for example):
-   1. `outputs/TrajICL/raw/best_val_checkpoint.pth.tar`
-   2. `outputs/TrajICL/centroid/best_val_checkpoint.pth.tar`
-
-Run:
-
+### A) Same checkpoint, different pools
 ```bash
 python compare_raw_vs_centroid.py \
   --model_path outputs/TrajICL/centroid/best_val_checkpoint.pth.tar \
@@ -199,35 +84,7 @@ python compare_raw_vs_centroid.py \
   --device cuda
 ```
 
-Saved outputs:
-
-1. `outputs/comparison/raw_vs_centroid_<timestamp>/metrics_comparison.json`
-2. `outputs/comparison/raw_vs_centroid_<timestamp>/metrics_long.csv`
-3. `outputs/comparison/raw_vs_centroid_<timestamp>/metrics_summary.csv`
-4. `outputs/comparison/raw_vs_centroid_<timestamp>/ade_vs_shot_raw_vs_centroid.png`
-5. `outputs/comparison/raw_vs_centroid_<timestamp>/fde_vs_shot_raw_vs_centroid.png`
-6. `outputs/comparison/raw_vs_centroid_<timestamp>/ade_improve_pct_vs_shot.png`
-7. `outputs/comparison/raw_vs_centroid_<timestamp>/fde_improve_pct_vs_shot.png`
-
-Plots are also copied to:
-
-1. `outputs/plots/`
-2. `outputs/graphs/`
-
-Terminal log:
-
-1. `outputs/logs/compare_raw_vs_centroid_<timestamp>.log`
-
----
-
-## Checkpoint vs Checkpoint Benchmark (Original-trained vs Centroid-trained)
-
-Use this script when you want to compare **two different checkpoints** directly in one report.
-
-Example: compare an original-trained checkpoint (baseline) against a centroid-trained checkpoint (candidate).
-
-Run:
-
+### B) Two checkpoints in one report (baseline vs candidate)
 ```bash
 python compare_checkpoints.py \
   --baseline_model_path outputs/TrajICL/raw/best_val_checkpoint.pth.tar \
@@ -241,115 +98,39 @@ python compare_checkpoints.py \
   --device cuda
 ```
 
-Saved outputs:
-
-1. `outputs/comparison/checkpoint_vs_checkpoint_<timestamp>/checkpoint_comparison.json`
-2. `outputs/comparison/checkpoint_vs_checkpoint_<timestamp>/metrics_long.csv`
-3. `outputs/comparison/checkpoint_vs_checkpoint_<timestamp>/metrics_pairwise.csv`
-4. per-pool ADE/FDE line plots and improvement plots
-
-Plots are also copied to:
-
-1. `outputs/plots/`
-2. `outputs/graphs/`
-
-Terminal log:
-
-1. `outputs/logs/compare_checkpoints_<timestamp>.log`
-
----
-
-## Output Structure
-
-All artifacts are stored under `outputs/`:
-
-1. `outputs/processed_data/` -> raw/centroid processed datasets
-2. `outputs/TrajICL/raw/` and `outputs/TrajICL/centroid/` -> checkpoints
-3. `outputs/logs/` -> terminal run logs
-4. `outputs/wandb/` -> wandb local files
-5. `outputs/plots/` -> plots
-6. `outputs/graphs/` -> graphs
-7. `outputs/comparison/` -> raw-vs-centroid benchmark reports
-
----
-
-## Automatic Terminal Logging
-
-The following scripts automatically capture full terminal output (`stdout` + `stderr`) to timestamped log files:
-
-1. `preprocess.py` -> `outputs/logs/preprocess_<timestamp>.log`
-2. `preprocess_centroids.py` -> `outputs/logs/preprocess_centroids_<timestamp>.log`
-3. `train.py` -> `outputs/logs/train_<timestamp>.log`
-4. `eval.py` -> `outputs/logs/eval_<timestamp>.log`
-
-This includes:
-
-1. `print(...)` messages
-2. progress bars
-3. warnings
-4. exceptions and tracebacks
-
-### Optional logging flags
-
-For preprocess/eval scripts:
-
+## Visualization (For Slides)
 ```bash
---log_dir <path>
---disable_file_logging
+python viz.py \
+  --raw_dir outputs/processed_data/motsynth \
+  --centroid_dir outputs/processed_data/motsynth_centroid \
+  --split train \
+  --num_samples 10
 ```
 
-Examples:
+Artifacts are saved under:
+- `outputs/visualizations/raw_vs_centroid_<timestamp>/`
 
-```bash
-python preprocess.py --name motsynth --stage all --log_dir outputs/logs/custom
-python preprocess_centroids.py --name motsynth --stage all --disable_file_logging
-python eval.py --dataset_name motsynth --example_pool_type centroid --log_dir outputs/logs/custom
-```
+Figure interpretation:
+- `00_before_vs_after_raw_vs_centroid.png` and `03_raw_vs_centroid_pairs.png` are now metadata-matched (`centroid_metadata[*].source_sample_index`) so raw and centroid panels come from the same source sample.
+- These paired figures are origin-normalized (primary trajectory starts at `(0,0)`) and use shared axis limits across both panels for fair shape comparison.
+- `01_raw_samples_grid.png` and `02_centroid_samples_grid.png` are independent sample grids for each representation (not one-to-one pairs).
+- Color semantics in all trajectory panels:
+  - blue = primary trajectory
+  - orange = context trajectories
+  - solid = history
+  - dashed = future
 
----
+## Output Layout
+- `outputs/processed_data/` -> raw/centroid processed datasets
+- `outputs/TrajICL/raw/` -> raw-model checkpoints
+- `outputs/TrajICL/centroid/` -> centroid-model checkpoints
+- `outputs/comparison/` -> benchmark reports
+- `outputs/visualizations/` -> visualization reports
+- `outputs/logs/` -> terminal logs
+- `outputs/plots/`, `outputs/graphs/` -> exported plot copies
 
-## Key Config Fields
-
-`configs/config.yaml`
-
-```yaml
-dataset:
-  name: motsynth
-  example_pool_type: raw        # raw | centroid
-  centroid_suffix: _centroid
-  processed_root: outputs/processed_data
-  load_similarity_seq: false    # keep false unless seq-similarity is explicitly needed
-
-output_dir: outputs
-```
-
----
-
-## Troubleshooting
-
-## Dataset not found
-
-If preprocessing cannot find MOTSynth annotations:
-
-```bash
-python preprocess.py --name motsynth --stage all --data_dir dataset
-python preprocess_centroids.py --name motsynth --stage all --data_dir dataset
-```
-
-## Centroid training cannot load data
-
-Verify these files exist:
-
-1. `outputs/processed_data/motsynth_centroid/train_trajs.pt`
-2. `outputs/processed_data/motsynth_centroid/train_similar_traj_dicts_hist.pickle`
-
-## Training gets killed with no traceback
-
-If training stops with just `Killed`, this is usually an OS OOM kill (memory pressure),
-most commonly with centroid pool + multi-worker dataloading.
-
-Use this safer command:
-
+## Common Stability Overrides
+If training is killed due to memory pressure:
 ```bash
 python train.py -m \
   dataset.name=motsynth \
@@ -360,112 +141,9 @@ python train.py -m \
   wandb=False
 ```
 
-Why this helps:
-
-1. `dataset.load_similarity_seq=false` avoids loading the very large optional seq-similarity pickle.
-2. `training.num_workers=0` prevents worker memory amplification.
-3. smaller `training.batch_size` reduces runtime memory use.
-
-## Stage 3 (`traj_sim`) appears stuck for hours
-
-If progress stops during:
-
-1. `===== Stage 3: compute trajectory similarity dicts =====`
-2. `Processing files: ...`
-
-run Stage 3 only with fewer workers:
-
-```bash
-python preprocess.py --name motsynth --stage traj_sim --max_workers 4
-python preprocess_centroids.py --name motsynth --stage traj_sim --max_workers 4
-```
-
-This repository also now initializes similarity workers with single-threaded BLAS/Torch
-settings and uses a safer default worker cap to reduce process/thread oversubscription.
-
-## Dependencies missing
-
-If imports fail (for example `omegaconf`), reinstall environment:
-
-```bash
-pip install -r requirements.txt
-```
-
----
-# Quick Run Checklist
-
-## 0. Optional: Activate your environment
-
-```bash
-source .venv/bin/activate
-```
-
-## 1. Ensure raw and centroid processed pools exist
-
-```bash
-python preprocess.py --name motsynth --stage all
-python preprocess_centroids.py --name motsynth --stage all
-```
-
-## 2. Train the baseline model (original / raw pool)
-
-```bash
-python train.py -m dataset.name=motsynth dataset.example_pool_type=raw
-```
-
-After training, note the checkpoint path:
-
-```text
-outputs/TrajICL/raw/best_val_checkpoint.pth.tar
-```
-
-## 3. Train the centroid-integrated model
-
-```bash
-python train.py -m dataset.name=motsynth dataset.example_pool_type=centroid
-```
-
-After training, note the checkpoint path:
-
-```text
-outputs/TrajICL/centroid/best_val_checkpoint.pth.tar
-```
-
-## 4. Benchmark A: Compare raw vs centroid pools using the same checkpoint
-
-```bash
-python compare_raw_vs_centroid.py \
-  --model_path outputs/TrajICL/centroid/best_val_checkpoint.pth.tar \
-  --dataset_name motsynth \
-  --prompting_method sim \
-  --device cuda
-```
-
-## 5. Benchmark B: Compare baseline checkpoint vs centroid checkpoint
-
-This generates a full comparison report.
-
-```bash
-python compare_checkpoints.py \
-  --baseline_model_path outputs/TrajICL/raw/best_val_checkpoint.pth.tar \
-  --candidate_model_path outputs/TrajICL/centroid/best_val_checkpoint.pth.tar \
-  --baseline_label original_trained \
-  --prompting_method sim \
-  --pools raw,centroid \
-  --shots 0,2,4,8 \
-  --device cuda
-```
-
-## Output locations
-
-Results and logs are saved under:
-
-- `outputs/comparison/`
-- `outputs/plots/`
-- `outputs/graphs/`
-- `outputs/logs/`
-
+## Documentation
+- `details.md` -> full end-to-end operational guide
+- `info.md` -> technical implementation notes, function-level details, and interpretation notes
 
 ## Acknowledgement
-
-This codebase builds on the original TrajICL release and related prior implementations acknowledged by the authors.
+This codebase builds on the original TrajICL release and its cited upstream dependencies.
