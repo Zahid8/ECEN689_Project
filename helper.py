@@ -14,6 +14,8 @@ import random
 
 # cluster weight function w = f(|C_i|)
 def cluster_size_to_weight(size, alpha=1.0): # can add other weight functions here later
+    if size <= 0 or size is None:
+        return 1.0
     return 1.0 + alpha * float(np.log(size))
 
 # weighted STES score 
@@ -36,7 +38,7 @@ def select_examples_weighted_stes(query_idx, stes_candidates_sorted, cluster_siz
         w = np.ones(n, dtype=np.float64)
     else:
         sizes = np.array(
-            [cluster_sizes.get(i, 0) for i in window], dtype=np.float64
+            [cluster_sizes.get(i, 1) for i in window], dtype=np.float64
         )
         max_size = sizes.max() if sizes.size else 1.0
         w = np.array([cluster_size_to_weight(s, alpha) for s in sizes], dtype=np.float64)
