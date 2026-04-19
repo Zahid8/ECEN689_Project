@@ -110,6 +110,7 @@ python compare_checkpoints.py \
 
 - `outputs/processed_data/motsynth/` -> raw processed pool
 - `outputs/processed_data/motsynth_centroid/` -> centroid processed pool
+- `clustered_dataset/motsynth_centroid/<split>/{scene_num}.csv` -> per-scene clustered centroid trajectories
 - `outputs/TrajICL/raw/` -> raw-model checkpoints
 - `outputs/TrajICL/centroid/` -> centroid-model checkpoints
 - `outputs/comparison/` -> benchmark reports
