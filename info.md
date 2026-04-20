@@ -62,6 +62,11 @@ Per-scene CSV export update:
 2. default root is `clustered_dataset` and can be overridden with:
    1. `--clustered_dataset_root`
 
+Fair-comparison query-matching update:
+1. optional flag `--match_raw_queries` enables raw-query-aligned centroid query construction
+2. when enabled, it applies on validation split and emits one centroid query per raw query window where a valid centroid match exists
+3. split logic then reuses raw primary pedestrian ids for fold assignment, so val query anchors align more strictly with raw preprocessing
+
 ## 3.1 Constants and runtime data structures
 
 1. `EPS = 1e-6`

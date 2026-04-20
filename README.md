@@ -46,6 +46,14 @@ python preprocess.py --name motsynth --stage all
 python preprocess_centroids.py --name motsynth --stage all
 ```
 
+For fair raw-vs-centroid validation (same val query anchors), enable raw-query matching:
+
+```bash
+python preprocess_centroids.py --name motsynth --stage all --match_raw_queries
+```
+
+When enabled, query matching is applied on `val` split by default, producing one centroid query per raw validation query window when a valid centroid match exists.
+
 Paper-aligned defaults used by centroid preprocessing:
 - direction threshold: `50` degrees
 - location threshold: `120` pixels
@@ -119,6 +127,7 @@ python compare_checkpoints.py \
 ## Notes for Reproducibility
 
 - If centroid preprocessing logic changes, regenerate centroid processed data before training/evaluation.
+- For strict raw-vs-centroid validation fairness, preprocess centroid data with `--match_raw_queries`.
 - Raw and centroid checkpoints should be trained/evaluated with matched hyperparameters for fair comparison.
 - If runs are terminated by OOM (`Killed`), reduce worker count and batch size.
 
