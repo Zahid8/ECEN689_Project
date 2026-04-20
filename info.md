@@ -56,6 +56,17 @@ The centroid path is implemented in `preprocess_centroids.py` and integrated suc
 
 ## 3) Centroid Pipeline Design (`preprocess_centroids.py`)
 
+Per-scene CSV export update:
+1. centroid preprocessing now also writes scene-level clustered trajectory CSVs under:
+   1. `clustered_dataset/<save_name>/<split>/{scene_num}.csv`
+2. default root is `clustered_dataset` and can be overridden with:
+   1. `--clustered_dataset_root`
+
+Fair-comparison query-matching update:
+1. optional flag `--match_raw_queries` enables raw-query-aligned centroid query construction
+2. when enabled, it applies on validation split and emits one centroid query per raw query window where a valid centroid match exists
+3. split logic then reuses raw primary pedestrian ids for fold assignment, so val query anchors align more strictly with raw preprocessing
+
 ## 3.1 Constants and runtime data structures
 
 1. `EPS = 1e-6`

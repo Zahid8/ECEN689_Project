@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import math
 import os
@@ -761,6 +762,9 @@ def convert_scene_to_centroid_samples(
     temporary_recluster_min_size: int,
     cluster_empty_tolerance: int,
     centroid_update_interval: int,
+    match_raw_queries: bool = False,
+    raw_primary_pedestrian_id: Optional[int] = None,
+    query_anchor_idx: int = 8,
 ):
     clusters = run_dynamic_clustering_scene(
         scene_traj=scene_traj,
@@ -781,7 +785,7 @@ def convert_scene_to_centroid_samples(
     )
 
     if len(local_cluster_ids) == 0:
-        return [], [], [], [], {}, global_centroid_id_counter
+        return [], [], [], [], {}, [], global_centroid_id_counter
 
     num_centroids, seq_len, _ = centroid_tracks.shape
 
@@ -794,6 +798,7 @@ def convert_scene_to_centroid_samples(
     centroid_frames_list = []
     centroid_pedestrians_list = []
     centroid_metadata = {}
+    scene_cluster_rows = []
 
     for local_cluster_id in local_cluster_ids:
         global_centroid_id = local_to_global[local_cluster_id]
@@ -803,9 +808,62 @@ def convert_scene_to_centroid_samples(
         metadata["source_local_cluster_id"] = int(local_cluster_id)
         centroid_metadata[str(global_centroid_id)] = metadata
 
-    for primary_idx, local_cluster_id in enumerate(local_cluster_ids):
-        order = [primary_idx] + [j for j in range(num_centroids) if j != primary_idx]
+    for i, local_cluster_id in enumerate(local_cluster_ids):
+        global_centroid_id = local_to_global[local_cluster_id]
+        meta = local_metadata[local_cluster_id]
+        size_history = meta.get("cluster_size_history", {})
+        default_cluster_size = int(meta.get("cluster_size", 0))
+        valid = np.where(centroid_masks[i] > 0)[0]
+        for t in valid:
+            frame_id = int(frames[t])
+            frame_size = int(size_history.get(str(frame_id), default_cluster_size))
+            scene_cluster_rows.append(
+                {
+                    "frame": frame_id,
+                    "cluster_id": int(global_centroid_id),
+                    "x": float(centroid_tracks[i, t, 0]),
+                    "y": float(centroid_tracks[i, t, 1]),
+                    "cluster_size": frame_size,
+                    "source_sample_index": int(source_sample_index),
+                    "source_local_cluster_id": int(local_cluster_id),
+                }
+            )
 
+    if match_raw_queries:
+        anchor = max(0, min(query_anchor_idx, seq_len - 1))
+        matched_local_cluster_id: Optional[int] = None
+
+        # In raw-preprocessed samples, primary query agent is index 0 by construction.
+        for local_cluster_id in local_cluster_ids:
+            cluster_runtime = clusters.get(local_cluster_id)
+            if cluster_runtime is None:
+                continue
+            members = cluster_runtime.member_history.get(anchor, [])
+            if 0 in members:
+                matched_local_cluster_id = local_cluster_id
+                break
+
+        if matched_local_cluster_id is None:
+            nearest_dist = None
+            for local_cluster_id in local_cluster_ids:
+                cluster_runtime = clusters.get(local_cluster_id)
+                if cluster_runtime is None:
+                    continue
+                member_frames = [
+                    t for t, members in cluster_runtime.member_history.items() if 0 in members
+                ]
+                if not member_frames:
+                    continue
+                dist = min(abs(t - anchor) for t in member_frames)
+                if nearest_dist is None or dist < nearest_dist:
+                    nearest_dist = dist
+                    matched_local_cluster_id = local_cluster_id
+
+        if matched_local_cluster_id is None:
+            matched_local_cluster_id = local_cluster_ids[0]
+
+        primary_idx = local_cluster_ids.index(matched_local_cluster_id)
+        order = [primary_idx] + [j for j in range(num_centroids) if j != primary_idx]
         ordered_tracks = centroid_tracks[order]
         ordered_masks = centroid_masks[order]
 
@@ -816,7 +874,25 @@ def convert_scene_to_centroid_samples(
         centroid_samples.append((traj_arr, mask_arr))
         centroid_filename_list.append(filename)
         centroid_frames_list.append(list(frames))
-        centroid_pedestrians_list.append(local_to_global[local_cluster_id])
+        if raw_primary_pedestrian_id is not None:
+            centroid_pedestrians_list.append(int(raw_primary_pedestrian_id))
+        else:
+            centroid_pedestrians_list.append(local_to_global[matched_local_cluster_id])
+    else:
+        for primary_idx, local_cluster_id in enumerate(local_cluster_ids):
+            order = [primary_idx] + [j for j in range(num_centroids) if j != primary_idx]
+
+            ordered_tracks = centroid_tracks[order]
+            ordered_masks = centroid_masks[order]
+
+            traj_arr = np.zeros((num_centroids, seq_len, 1, 3), dtype=np.float32)
+            traj_arr[:, :, 0, :2] = ordered_tracks
+            mask_arr = ordered_masks[:, :, None].astype(np.float32)
+
+            centroid_samples.append((traj_arr, mask_arr))
+            centroid_filename_list.append(filename)
+            centroid_frames_list.append(list(frames))
+            centroid_pedestrians_list.append(local_to_global[local_cluster_id])
 
     next_counter = global_centroid_id_counter + len(local_cluster_ids)
 
@@ -826,6 +902,7 @@ def convert_scene_to_centroid_samples(
         centroid_frames_list,
         centroid_pedestrians_list,
         centroid_metadata,
+        scene_cluster_rows,
         next_counter,
     )
 
@@ -844,6 +921,38 @@ def write_centroid_scene(scene_output_path: str, centroid_tracks, metadata) -> N
         )
 
 
+def write_clustered_scene_csvs(
+    scene_rows_by_scene: Dict[str, List[dict]],
+    output_dir: str,
+) -> None:
+    os.makedirs(output_dir, exist_ok=True)
+    fieldnames = [
+        "frame",
+        "cluster_id",
+        "x",
+        "y",
+        "cluster_size",
+        "source_sample_index",
+        "source_local_cluster_id",
+    ]
+    for scene_name, rows in scene_rows_by_scene.items():
+        if not rows:
+            continue
+        rows_sorted = sorted(
+            rows,
+            key=lambda r: (
+                int(r["frame"]),
+                int(r["cluster_id"]),
+                int(r["source_sample_index"]),
+            ),
+        )
+        scene_csv_path = os.path.join(output_dir, f"{scene_name}.csv")
+        with open(scene_csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows_sorted)
+
+
 def process_split(
     split: str,
     name: str,
@@ -860,6 +969,9 @@ def process_split(
     cluster_empty_tolerance: int,
     centroid_update_interval: int,
     output_name_suffix: str,
+    clustered_dataset_root: str,
+    hist_len: int,
+    match_raw_queries: bool,
 ) -> str:
     r, stride = infer_r_stride(name)
     (
@@ -879,6 +991,8 @@ def process_split(
     centroid_pedestrians_list = []
     centroid_metadata = {}
     centroid_metadata_by_scene = defaultdict(dict)
+    scene_rows_by_scene = defaultdict(list)
+    missing_matched_queries = 0
 
     global_centroid_id_counter = CENTROID_ID_OFFSET
 
@@ -898,6 +1012,7 @@ def process_split(
             scene_frames,
             scene_pedestrians,
             scene_metadata,
+            scene_cluster_rows,
             global_centroid_id_counter,
         ) = convert_scene_to_centroid_samples(
             scene_traj=scene_traj,
@@ -914,7 +1029,13 @@ def process_split(
             temporary_recluster_min_size=temporary_recluster_min_size,
             cluster_empty_tolerance=cluster_empty_tolerance,
             centroid_update_interval=centroid_update_interval,
+            match_raw_queries=match_raw_queries,
+            raw_primary_pedestrian_id=pedestrians_list[sample_idx],
+            query_anchor_idx=max(0, hist_len - 1),
         )
+
+        if match_raw_queries and len(scene_samples) == 0:
+            missing_matched_queries += 1
 
         centroid_joint_and_mask.extend(scene_samples)
         centroid_filename_list.extend(scene_filenames)
@@ -924,6 +1045,7 @@ def process_split(
         centroid_metadata.update(scene_metadata)
         for centroid_track_id, metadata in scene_metadata.items():
             centroid_metadata_by_scene[filename][centroid_track_id] = metadata
+        scene_rows_by_scene[filename].extend(scene_cluster_rows)
 
     if not centroid_joint_and_mask:
         raise RuntimeError(
@@ -987,6 +1109,11 @@ def process_split(
             "cluster_empty_tolerance": cluster_empty_tolerance,
             "centroid_update_interval": centroid_update_interval,
         },
+        "query_matching": {
+            "match_raw_queries": bool(match_raw_queries),
+            "hist_len_anchor": int(hist_len),
+            "missing_matched_queries": int(missing_matched_queries),
+        },
         "stats": compute_stats_traj(centroid_trajs),
         "sanity": {
             "raw_input_track_windows": int(len(raw_trajs)),
@@ -1003,7 +1130,9 @@ def process_split(
         f"[{split}] raw windows={len(raw_trajs)} | centroid windows={len(centroid_trajs)} | "
         f"avg_cluster_size={config['sanity']['avg_cluster_size']:.3f} | "
         f"single_member_clusters={single_member_clusters} | "
-        f"avg_centroid_track_length={config['sanity']['avg_centroid_track_length']:.3f}"
+        f"avg_centroid_track_length={config['sanity']['avg_centroid_track_length']:.3f} | "
+        f"match_raw_queries={match_raw_queries} | "
+        f"missing_matched_queries={missing_matched_queries}"
     )
 
     save_name = f"{name}{output_name_suffix}"
@@ -1050,6 +1179,12 @@ def process_split(
         },
     )
 
+    clustered_scene_dir = os.path.join(clustered_dataset_root, save_name, split)
+    write_clustered_scene_csvs(scene_rows_by_scene, clustered_scene_dir)
+    print(
+        f"[{split}] wrote {len(scene_rows_by_scene)} scene CSV files to {clustered_scene_dir}"
+    )
+
     import pickle as _pickle
     cluster_sizes_by_sample_idx = {
         idx: int(centroid_metadata.get(str(global_id), {}).get("cluster_size", 1))
@@ -1082,11 +1217,25 @@ def main():
     parser.add_argument("--name", type=str, required=True)
     parser.add_argument("--data_dir", type=str, default="data")
     parser.add_argument("--save_root", type=str, default="outputs/processed_data")
+    parser.add_argument(
+        "--clustered_dataset_root",
+        type=str,
+        default="clustered_dataset",
+        help="Output root for per-scene centroid trajectory CSVs.",
+    )
     parser.add_argument("--splits", type=str, default="train,val")
     parser.add_argument("--similarity_scopes", type=str, default="hist,seq")
     parser.add_argument("--valid_ratio", type=float, default=0.2)
     parser.add_argument("--min_prompt_num", type=int, default=16)
     parser.add_argument("--hist_len", type=int, default=9)
+    parser.add_argument(
+        "--match_raw_queries",
+        action="store_true",
+        help=(
+            "Match centroid queries 1:1 to raw queries. Applied to validation split "
+            "by default (split == val) for fair raw-vs-centroid comparison."
+        ),
+    )
 
     parser.add_argument("--output_name_suffix", type=str, default="_centroid")
 
@@ -1154,6 +1303,9 @@ def main():
                     cluster_empty_tolerance=args.cluster_empty_tolerance,
                     centroid_update_interval=args.centroid_update_interval,
                     output_name_suffix=args.output_name_suffix,
+                    clustered_dataset_root=args.clustered_dataset_root,
+                    hist_len=args.hist_len,
+                    match_raw_queries=(args.match_raw_queries and split == "val"),
                 )
 
         if args.stage in ["sim_matrix", "all"]:
