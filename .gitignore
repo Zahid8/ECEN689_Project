@@ -99,3 +99,8 @@ dataset/*.zip
 *.zip
 
 dataset/
+# generated clustered centroid CSVs
+clustered_dataset/
+
+# generated clustered centroid CSVs
+clustered_dataset/
