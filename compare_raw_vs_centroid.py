@@ -65,7 +65,7 @@ def run_eval_for_pool(
     from helper import create_dataloader, evaluate
     from model import create_model
 
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     cfg = OmegaConf.create(checkpoint["cfg"])
     OmegaConf.set_struct(cfg, False)
 
