@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import distance
 from sklearn.cluster import AgglomerativeClustering
+from sklearn.neighbors import LocalOutlierFactor
 from utils.data import make_mot_standard_gt_df
 
 
@@ -234,6 +235,111 @@ def _distance_eval(frame_data: np.ndarray, centroids: Sequence[Sequence[float]])
     return eval_rows
 
 
+def _detect_lof_outlier_indices(
+    frame_data: np.ndarray,
+    grouped_members: Sequence[Tuple[int, np.ndarray]],
+) -> List[int]:
+    """Detect potential outliers per cluster with LOF.
+
+    Returns row indices in ``frame_data`` judged as outliers.
+    """
+    outlier_indices: List[int] = []
+    for cluster_id, members in grouped_members:
+        if len(members) < 5:
+            continue
+        valid_indices = np.where(~np.isnan(frame_data[:, 7]))[0]
+        if len(valid_indices) == 0:
+            continue
+        valid_labels = frame_data[valid_indices, 7].astype(np.int64)
+        cluster_indices = valid_indices[valid_labels == int(cluster_id)]
+        if len(cluster_indices) < 5:
+            continue
+        n_neighbors = max(2, min(20, len(cluster_indices) - 1))
+        features = frame_data[cluster_indices][:, [2, 3, 4]]
+        lof = LocalOutlierFactor(n_neighbors=n_neighbors)
+        labels = lof.fit_predict(features)
+        flagged = cluster_indices[labels == -1]
+        if len(flagged) > 0:
+            outlier_indices.extend(flagged.tolist())
+    return sorted(set(int(i) for i in outlier_indices))
+
+
+def _reassign_rows_to_nearest_centroid(
+    frame_data: np.ndarray,
+    row_indices: Sequence[int],
+    centroids: Sequence[Sequence[float]],
+    cfg: Raw2ClusterConfig,
+) -> List[int]:
+    """Reassign candidate rows to nearest centroid if thresholds are satisfied.
+
+    Returns unresolved row indices that fail reassignment.
+    """
+    unresolved: List[int] = []
+    for row_idx in row_indices:
+        current_label = int(frame_data[row_idx, 7]) if not math.isnan(frame_data[row_idx, 7]) else -1
+        best_label: Optional[int] = None
+        best_dir = float("inf")
+        best_dist = float("inf")
+        for centro in centroids:
+            centro_label = int(centro[1])
+            if centro_label == current_label:
+                continue
+            dir_delta = smallest_angular_distance(float(frame_data[row_idx, 4]), float(centro[4]))
+            if dir_delta > cfg.tdirect:
+                continue
+            dist_delta = distance.euclidean(frame_data[row_idx, [2, 3]], [centro[2], centro[3]])
+            if dist_delta <= cfg.tdist and (dir_delta < best_dir or dist_delta < best_dist):
+                best_label = centro_label
+                best_dir = dir_delta
+                best_dist = dist_delta
+        if best_label is None:
+            unresolved.append(int(row_idx))
+            continue
+        frame_data[row_idx, 7] = float(best_label)
+    return unresolved
+
+
+def _recluster_temporary_rows(
+    temporary_rows: Sequence[np.ndarray],
+    cfg: Raw2ClusterConfig,
+    next_cluster_id: int,
+) -> Tuple[Dict[int, int], int]:
+    """Cluster buffered unresolved rows and create new cluster labels per ped id."""
+    if len(temporary_rows) == 0:
+        return {}, next_cluster_id
+    buffer_arr = np.vstack(temporary_rows)
+    direction = buffer_arr[:, 4].reshape(-1, 1)
+    n_clusters = min(cfg.n_initial_cluster, len(direction))
+    if n_clusters <= 1:
+        base_labels = np.zeros(len(direction), dtype=np.int64)
+    else:
+        base_model = AgglomerativeClustering(
+            n_clusters=n_clusters, linkage="complete", metric="manhattan"
+        )
+        base_labels = base_model.fit_predict(direction)
+    pid_to_new_cluster: Dict[int, int] = {}
+    for base_id in np.unique(base_labels):
+        idx = np.where(base_labels == base_id)[0]
+        members = buffer_arr[idx]
+        if len(members) <= 1:
+            pid_to_new_cluster[int(members[0, 1])] = next_cluster_id
+            next_cluster_id += 1
+            continue
+        sub_model = AgglomerativeClustering(
+            distance_threshold=cfg.tdist,
+            n_clusters=None,
+            linkage="complete",
+            metric="manhattan",
+        )
+        sub_labels = sub_model.fit_predict(members[:, [2, 3]])
+        for sub_id in np.unique(sub_labels):
+            sub_idx = np.where(sub_labels == sub_id)[0]
+            for member in members[sub_idx]:
+                pid_to_new_cluster[int(member[1])] = next_cluster_id
+            next_cluster_id += 1
+    return pid_to_new_cluster, next_cluster_id
+
+
 def arrange_per_cluster(centroids_per_frame: Sequence[Sequence[Sequence[float]]]) -> List[List[Any]]:
     """Convert frame-major centroid list into cluster-major layout."""
     grouped: Dict[int, List[List[float]]] = {}
@@ -405,6 +511,7 @@ def run_raw2cluster_pipeline_from_df(
     centroids_by_frame: List[List[List[float]]] = []
     distance_evals: List[Tuple[int, List[List[float]]]] = []
     member_centroids: List[List[Tuple[int, np.ndarray]]] = []
+    temporary_buffer: List[np.ndarray] = []
 
     prev_centroids: List[List[float]] = []
     for frame_no in range(start, finish):
@@ -429,6 +536,33 @@ def run_raw2cluster_pipeline_from_df(
             centroids = _compute_centroids(frame_data)
 
         grouped = _group_by_cluster(frame_data)
+        should_evaluate = frame_no == start or (frame_no - start) % max(cfg.eval_interval, 1) == 0
+        if should_evaluate and len(centroids) > 0:
+            outlier_indices = _detect_lof_outlier_indices(frame_data, grouped)
+            unresolved_rows = _reassign_rows_to_nearest_centroid(
+                frame_data=frame_data,
+                row_indices=outlier_indices,
+                centroids=centroids,
+                cfg=cfg,
+            )
+            for unresolved_idx in unresolved_rows:
+                temporary_buffer.append(frame_data[unresolved_idx].copy())
+            if len(temporary_buffer) > 10:
+                remapped_ids, next_cluster_id = _recluster_temporary_rows(
+                    temporary_rows=temporary_buffer,
+                    cfg=cfg,
+                    next_cluster_id=next_cluster_id,
+                )
+                for ped_id, cluster_id in remapped_ids.items():
+                    id_to_cluster[int(ped_id)] = int(cluster_id)
+                temporary_buffer = []
+                for row_idx in range(len(frame_data)):
+                    ped_id = int(frame_data[row_idx, 1])
+                    if ped_id in id_to_cluster:
+                        frame_data[row_idx, 7] = float(id_to_cluster[ped_id])
+            centroids = _compute_centroids(frame_data)
+            grouped = _group_by_cluster(frame_data)
+
         if frame_no == start or (frame_no - start) % cfg.eval_frame_interval == 0:
             frame_eval = _distance_eval(frame_data, centroids)
         else:

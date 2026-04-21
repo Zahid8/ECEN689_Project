@@ -35,7 +35,7 @@ aug:
   change_num_example: True
 
 dataset:
-  name: motsynth
+  name: motsynth_dual_dc_5020
   num_example: 8 # 8 for stage 2
   prompting: sim
   pool_ratio: 1
@@ -59,6 +59,6 @@ load_model:
   model_dir: TrajICL
   model_path: Stage2/best_val_checkpoint.pth.tar
 
-output_dir: results/dc
+output_dir: results
 device: cuda
 wandb: True
