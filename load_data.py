@@ -19,6 +19,7 @@ def load_processed_data(
     Any,
     Any,
     Optional[List[Dict[str, List[torch.Tensor]]]],
+    Optional[List[Dict[str, Any]]],
 ]:
     """Load tensors, index pickles, similarity dicts, and optional DC pool bundles."""
     save_dir = f"processed_data/{name}"
@@ -74,6 +75,41 @@ def load_processed_data(
             trajs_dc_by_fold.append({"trajs": bundle, "masks": None})
         fold_k += 1
 
+    pool_dc_by_fold: Optional[List[Dict[str, Any]]] = None
+    fold_k = 0
+    while os.path.isfile(os.path.join(save_dir, f"{split}_pool_dc_fold_{fold_k}_trajs.pt")):
+        if pool_dc_by_fold is None:
+            pool_dc_by_fold = []
+        with open(
+            os.path.join(save_dir, f"{split}_pool_dc_fold_{fold_k}_filename2idxs_dict.pickle"),
+            mode="br",
+        ) as fi:
+            pool_filename2idxs = pickle.load(fi)
+        with open(
+            os.path.join(save_dir, f"{split}_pool_dc_fold_{fold_k}_idx2filename_dict.pickle"),
+            mode="br",
+        ) as fi:
+            pool_idx2filename = pickle.load(fi)
+        with open(
+            os.path.join(save_dir, f"{split}_pool_dc_fold_{fold_k}_raw_idx_to_cluster_idx.pickle"),
+            mode="br",
+        ) as fi:
+            raw_idx_to_cluster_idx = pickle.load(fi)
+        pool_dc_by_fold.append(
+            {
+                "trajs": torch.load(
+                    os.path.join(save_dir, f"{split}_pool_dc_fold_{fold_k}_trajs.pt")
+                ),
+                "masks": torch.load(
+                    os.path.join(save_dir, f"{split}_pool_dc_fold_{fold_k}_masks.pt")
+                ),
+                "filename2idxs_dict": pool_filename2idxs,
+                "idx2filename_dict": pool_idx2filename,
+                "raw_idx_to_cluster_idx": raw_idx_to_cluster_idx,
+            }
+        )
+        fold_k += 1
+
     return (
         trajs,
         masks,
@@ -84,6 +120,7 @@ def load_processed_data(
         similarity_dicts,
         similarity_dicts_seq,
         trajs_dc_by_fold,
+        pool_dc_by_fold,
     )
 
 

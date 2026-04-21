@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
+import numpy as np
 import pandas as pd
 import torch
 import yaml
@@ -221,6 +222,89 @@ def build_clustered_pool_dataset(
     )
 
 
+def build_cluster_pool_per_fold(
+    trajs: Sequence[torch.Tensor],
+    masks: Sequence[torch.Tensor],
+    filename_list: Sequence[str],
+    pool_indices_by_fold: Sequence[Sequence[int]],
+    dc_cfg: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Build unique centroid pool datasets for each fold.
+
+    Returns one bundle per fold containing centroid trajectories/masks and
+    mappings between raw indices and cluster indices.
+    """
+    fold_bundles: List[Dict[str, Any]] = []
+    for pool_indices in pool_indices_by_fold:
+        pool_by_file: Dict[str, List[int]] = defaultdict(list)
+        for sample_idx in pool_indices:
+            pool_by_file[filename_list[sample_idx]].append(sample_idx)
+
+        cluster_trajs: List[torch.Tensor] = []
+        cluster_masks: List[torch.Tensor] = []
+        cluster_filename2idxs_dict: Dict[str, List[int]] = defaultdict(list)
+        cluster_idx2filename_dict: Dict[int, str] = {}
+        cluster_meta: Dict[int, Dict[str, Any]] = {}
+        raw_idx_to_cluster_idx: Dict[int, int] = {}
+        next_cluster_idx = 0
+        scene_stats: List[Dict[str, Any]] = []
+
+        for file_name, file_pool_indices in pool_by_file.items():
+            clustered_trajs, clustered_masks, cluster_members = _cluster_pool_for_file(
+                trajs=trajs,
+                masks=masks,
+                file_pool_indices=file_pool_indices,
+                dc_cfg=dc_cfg,
+            )
+            for local_idx, centroid_traj in enumerate(clustered_trajs):
+                centroid_mask = clustered_masks[local_idx]
+                member_indices = sorted(cluster_members.get(local_idx, []))
+                cluster_idx = next_cluster_idx
+                next_cluster_idx += 1
+
+                cluster_trajs.append(centroid_traj)
+                cluster_masks.append(centroid_mask)
+                cluster_filename2idxs_dict[file_name].append(cluster_idx)
+                cluster_idx2filename_dict[cluster_idx] = file_name
+                cluster_meta[cluster_idx] = {
+                    "file_name": file_name,
+                    "member_original_indices": member_indices,
+                    "cluster_weight": int(len(member_indices)),
+                }
+                for raw_idx in member_indices:
+                    raw_idx_to_cluster_idx[int(raw_idx)] = cluster_idx
+
+            raw_count = int(len(file_pool_indices))
+            cluster_count = int(len(clustered_trajs))
+            reduction_pct = 0.0
+            if raw_count > 0:
+                reduction_pct = 100.0 * float(raw_count - cluster_count) / float(raw_count)
+            scene_stats.append(
+                {
+                    "file_name": file_name,
+                    "raw_count": raw_count,
+                    "cluster_count": cluster_count,
+                    "reduction_pct": reduction_pct,
+                }
+            )
+
+        fold_bundles.append(
+            {
+                "trajs": cluster_trajs,
+                "masks": cluster_masks,
+                "filename2idxs_dict": dict(cluster_filename2idxs_dict),
+                "idx2filename_dict": cluster_idx2filename_dict,
+                "cluster_meta": cluster_meta,
+                "raw_idx_to_cluster_idx": raw_idx_to_cluster_idx,
+                "scene_stats": scene_stats,
+                "raw_pool_count": int(len(pool_indices)),
+                "cluster_pool_count": int(len(cluster_trajs)),
+            }
+        )
+
+    return fold_bundles
+
+
 def _cluster_pool_for_file(
     trajs: Sequence[torch.Tensor],
     masks: Sequence[torch.Tensor],
@@ -255,10 +339,16 @@ def _cluster_pool_for_file(
         return [], [], {}
 
     tracks_df = pd.DataFrame(mot_rows)
+    tuned_tdist, tuned_tdirect = _get_scene_adaptive_thresholds(
+        tracks_df=tracks_df,
+        base_tdist=float(dc_cfg.get("tdist", 110.0)),
+        base_tdirect=float(dc_cfg.get("tdirect", 50.0)),
+        dc_cfg=dc_cfg,
+    )
     config = Raw2ClusterConfig(
         n_initial_cluster=int(dc_cfg.get("n_initial_cluster", 8)),
-        tdist=float(dc_cfg.get("tdist", 110.0)),
-        tdirect=float(dc_cfg.get("tdirect", 50.0)),
+        tdist=tuned_tdist,
+        tdirect=tuned_tdirect,
         eval_interval=int(dc_cfg.get("eval_interval", 10)),
         eval_frame_interval=int(dc_cfg.get("eval_frame_interval", 1)),
     )
@@ -325,6 +415,69 @@ def _cluster_pool_for_file(
         clustered_members[singleton_local_idx] = [int(uncovered_idx)]
 
     return clustered_trajs, clustered_masks, clustered_members
+
+
+def _get_scene_adaptive_thresholds(
+    tracks_df: pd.DataFrame,
+    base_tdist: float,
+    base_tdirect: float,
+    dc_cfg: Dict[str, Any],
+) -> Tuple[float, float]:
+    """Return scene-adaptive tdist/tdirect if enabled in config."""
+    use_adaptive = bool(dc_cfg.get("adaptive_scene_thresholds", False))
+    if not use_adaptive:
+        return base_tdist, base_tdirect
+
+    dist_percentile = float(dc_cfg.get("adaptive_dist_percentile", 50.0))
+    dist_scale = float(dc_cfg.get("adaptive_dist_scale", 1.0))
+    min_tdist = float(dc_cfg.get("adaptive_tdist_min", 20.0))
+    max_tdist = float(dc_cfg.get("adaptive_tdist_max", 250.0))
+
+    speed_percentile = float(dc_cfg.get("adaptive_speed_percentile", 50.0))
+    speed_reference = float(dc_cfg.get("adaptive_speed_reference", 4.0))
+    direction_scale = float(dc_cfg.get("adaptive_direction_scale", 1.0))
+    min_tdirect = float(dc_cfg.get("adaptive_tdirect_min", 15.0))
+    max_tdirect = float(dc_cfg.get("adaptive_tdirect_max", 90.0))
+
+    frame_distances: List[float] = []
+    for _, frame_df in tracks_df.groupby("frame"):
+        coords = frame_df[["x", "y"]].to_numpy(dtype=np.float64)
+        if coords.shape[0] < 2:
+            continue
+        deltas = coords[:, None, :] - coords[None, :, :]
+        pairwise = np.sqrt(np.sum(deltas * deltas, axis=2))
+        upper = pairwise[np.triu_indices(coords.shape[0], k=1)]
+        upper = upper[np.isfinite(upper)]
+        if upper.size > 0:
+            frame_distances.extend(upper.tolist())
+
+    if len(frame_distances) > 0:
+        dist_stat = float(np.percentile(frame_distances, dist_percentile))
+        tuned_tdist = float(np.clip(dist_stat * dist_scale, min_tdist, max_tdist))
+    else:
+        tuned_tdist = base_tdist
+
+    speed_values: List[float] = []
+    for _, ped_df in tracks_df.sort_values(["id", "frame"]).groupby("id"):
+        points = ped_df[["x", "y"]].to_numpy(dtype=np.float64)
+        if points.shape[0] < 2:
+            continue
+        diff = points[1:] - points[:-1]
+        speeds = np.sqrt(np.sum(diff * diff, axis=1))
+        speeds = speeds[np.isfinite(speeds)]
+        if speeds.size > 0:
+            speed_values.extend(speeds.tolist())
+
+    if len(speed_values) > 0:
+        speed_stat = float(np.percentile(speed_values, speed_percentile))
+        speed_ratio = speed_stat / max(speed_reference, 1e-6)
+        tuned_tdirect = float(
+            np.clip(base_tdirect * speed_ratio * direction_scale, min_tdirect, max_tdirect)
+        )
+    else:
+        tuned_tdirect = base_tdirect
+
+    return tuned_tdist, tuned_tdirect
 
 
 def _build_cluster_members(

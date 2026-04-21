@@ -45,6 +45,7 @@ class Dataset(torch.utils.data.Dataset):
             self.similarity_dicts,
             self.similarity_dicts_seq,
             self.trajs_dc_by_fold,
+            self.pool_dc_by_fold,
         ) = load_processed_data(
             split,
             name,
@@ -89,7 +90,14 @@ class Dataset(torch.utils.data.Dataset):
 
         trajs_list = []
         masks_list = []
-        if self.trajs_dc_by_fold is not None:
+        if self.pool_dc_by_fold is not None:
+            pool_bundle = self.pool_dc_by_fold[fold]
+            pool_trajs = pool_bundle["trajs"]
+            pool_masks = pool_bundle["masks"]
+            for example_idx in example_idxs:
+                trajs_list.append(pool_trajs[example_idx])
+                masks_list.append(pool_masks[example_idx])
+        elif self.trajs_dc_by_fold is not None:
             dc_bundle = self.trajs_dc_by_fold[fold]
             trajs_dc = dc_bundle["trajs"]
             masks_dc = dc_bundle.get("masks")
