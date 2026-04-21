@@ -93,7 +93,7 @@ def main():
 
     # --- ループ 🚀 Evaluation Loop over Shot Counts ---
     # Evaluate for various numbers of demonstration examples (shots)
-    for i in [0, 2, 4, 8]:
+    for i in [0, 1, 2, 3, 4, 8]:
         print(f"--- Running evaluation for {i} shots ---")
         cfg.dataset.num_example = i  # i corresponds to the number of shots (x-axis)
 

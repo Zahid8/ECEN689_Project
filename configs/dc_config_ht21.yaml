@@ -1,0 +1,45 @@
+# Dynamic clustering for preprocess pool simplification (MOTSynth / raw2cluster).
+# Defaults match raw2cluster.py CLI (start=50, finish=1600).
+
+hist_len_anchor: 9
+representative: lowest_index
+
+# Optional: cache per-scene cluster labels (pickle). Set to a directory path, or null to disable.
+cache_dir: null
+
+n_initial_cluster: 8
+tdist: 110.0
+tdirect: 50.0
+eval_interval: 10
+eval_frame_interval: 1
+
+# Scene-adaptive thresholding (recommended when scene pixel scales vary).
+# If false: use fixed `tdist` / `tdirect` above for all scenes.
+adaptive_scene_thresholds: False
+
+# Percentile of within-frame pairwise pedestrian distances used as scene distance reference.
+# Example: 50.0 means median pairwise distance.
+adaptive_dist_percentile: 50.0
+
+# Multiplicative factor applied to the distance reference to get scene-specific tdist.
+# Larger value -> looser distance threshold -> easier merging.
+adaptive_dist_scale: 0.5
+
+# Clamp range for adaptive tdist to avoid extreme values on sparse/dense scenes.
+adaptive_tdist_min: 20.0
+adaptive_tdist_max: 40.0
+
+# Percentile of per-step speed magnitudes used as scene motion reference.
+adaptive_speed_percentile: 50.0
+
+# Normalization constant for speed-based tdirect scaling.
+# Scene speed / reference speed scales the base direction threshold.
+adaptive_speed_reference: 4.0
+
+# Extra multiplicative factor on speed-based tdirect.
+# Larger value -> looser direction threshold -> easier merging across headings.
+adaptive_direction_scale: 0.5
+
+# Clamp range for adaptive tdirect (degrees).
+adaptive_tdirect_min: 5.0
+adaptive_tdirect_max: 25.0

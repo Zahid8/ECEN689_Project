@@ -35,7 +35,7 @@ aug:
   change_num_example: True
 
 dataset:
-  name: motsynth_dual_dc_5020
+  name: motsynth_dual_dc
   num_example: 8 # 8 for stage 2
   prompting: sim
   pool_ratio: 1
