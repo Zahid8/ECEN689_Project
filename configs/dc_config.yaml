@@ -1,0 +1,16 @@
+# Dynamic clustering for preprocess pool simplification (MOTSynth / raw2cluster).
+# Defaults match raw2cluster.py CLI (start=50, finish=1600).
+
+start: 50
+finish: 1600
+hist_len_anchor: 9
+representative: lowest_index
+
+# Optional: cache per-scene cluster labels (pickle). Set to a directory path, or null to disable.
+cache_dir: null
+
+n_initial_cluster: 8
+tdist: 110.0
+tdirect: 50.0
+eval_interval: 10
+eval_frame_interval: 1

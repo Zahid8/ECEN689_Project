@@ -370,7 +370,33 @@ def run_raw2cluster_pipeline(
         Dictionary with centroids, evaluations, per-frame members, and summary.
     """
     cfg = config or Raw2ClusterConfig()
-    tracks_df = load_tracks(Path(input_path))
+    tracks_df = load_tracks(Path(input_path))  # use load_data()
+    return run_raw2cluster_pipeline_from_df(
+        tracks_df=tracks_df,
+        start=start,
+        finish=finish,
+        config=cfg,
+    )
+
+
+def run_raw2cluster_pipeline_from_df(
+    tracks_df: pd.DataFrame,
+    start: int,
+    finish: int,
+    config: Optional[Raw2ClusterConfig] = None,
+) -> Dict[str, Any]:
+    """Run migrated raw-to-cluster pipeline from an in-memory trajectory DataFrame.
+
+    Args:
+        tracks_df: DataFrame with ``frame``, ``id``, ``x``, ``y`` columns.
+        start: Inclusive start frame.
+        finish: Exclusive finish frame.
+        config: Optional pipeline config.
+
+    Returns:
+        Dictionary with centroids, evaluations, per-frame members, and summary.
+    """
+    cfg = config or Raw2ClusterConfig()
     data = prepare_data(tracks_df)
     initial_data = get_data_by_frame(data, start)
     id_to_cluster = _cluster_initial_frame(initial_data, cfg)
@@ -438,6 +464,36 @@ def run_raw2cluster_pipeline(
         out_df.to_csv(cfg.output_csv, index=False)
 
     return result
+
+
+def extract_ped_cluster_labels(
+    pipeline_result: Dict[str, Any],
+    start: int,
+    finish: int,
+) -> Dict[int, Dict[int, int]]:
+    """Build MOT frame -> pedestrian id -> cluster id from pipeline member groupings.
+
+    Args:
+        pipeline_result: Output of ``run_raw2cluster_pipeline`` with ``member_centroids``.
+        start: Inclusive start frame used when running the pipeline (matches ``member_centroids`` offset).
+        finish: Exclusive finish frame.
+
+    Returns:
+        Mapping ``frame_no -> {ped_id -> cluster_id}`` for frames in ``[start, finish)``.
+    """
+    member_centroids: List[List[Tuple[int, np.ndarray]]] = pipeline_result["member_centroids"]
+    labels: Dict[int, Dict[int, int]] = {}
+    for frame_no in range(start, finish):
+        rel = frame_no - start
+        grouped = member_centroids[rel]
+        frame_labels: Dict[int, int] = {}
+        for _, members in grouped:
+            for row_idx in range(len(members)):
+                pid = int(members[row_idx, 1])
+                cid = int(members[row_idx, 7])
+                frame_labels[pid] = cid
+        labels[frame_no] = frame_labels
+    return labels
 
 
 def visualize_raw_vs_cluster(
@@ -601,8 +657,8 @@ def main() -> None:
     """CLI entrypoint for single-scene or batch processing."""
     parser = argparse.ArgumentParser(description="Run raw-to-cluster trajectory processing.")
     parser.add_argument("--input", type=str, default=None, help="Single input file path.")
-    parser.add_argument("--start", type=int, default=75, help="Inclusive start frame.")
-    parser.add_argument("--finish", type=int, default=950, help="Exclusive finish frame.")
+    parser.add_argument("--start", type=int, default=50, help="Inclusive start frame.")
+    parser.add_argument("--finish", type=int, default=1600, help="Exclusive finish frame.")
     parser.add_argument(
         "--output-csv",
         type=str,

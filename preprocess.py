@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import pickle
+import random
 import warnings
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -11,6 +12,11 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from dc_pool_preprocess import (
+    build_clustered_pool_dataset,
+    build_trajs_dc_aligned_per_fold,
+    load_dc_config,
+)
 from load_data import create_trajs_masks
 from utils.data import (
     load_data_jrdb_2dbox,
@@ -20,6 +26,13 @@ from utils.data import (
 )
 
 warnings.simplefilter("ignore")
+
+
+def set_preprocessing_seed(seed: int) -> None:
+    """Fix RNGs so pool/valid splits and downstream steps are reproducible."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
 
 # ============================================================
@@ -154,30 +167,45 @@ def split_pedestrians_by_ratio(
     """
     For each file, get the first appearance frame of each pedestrian ID,
     then split into train/test according to a given ratio.
+
+    Args:
+        file_names: List of file names.
+        pedestrian_ids: List of pedestrian IDs.
+        pedestrian_frames: List of pedestrian frames.
+        valid_ratio: Ratio of pedestrians to assign to the valid split.
+
+    Returns:
+        pool_indices_by_fold: List of pool indices for each fold.
+        valid_indices_by_fold: List of valid indices for each fold.
     """
+    # Map each file -> {pedestrian_id: earliest_frame_seen_in_that_file}.
     file_pid_to_fframe = defaultdict(dict)
 
     for i in range(len(file_names)):
         fname = file_names[i]
         pid = pedestrian_ids[i]
-        fframe = min(pedestrian_frames[i])
-        if pid not in file_pid_to_fframe[fname]:
+        fframe = min(pedestrian_frames[i])  # start frame of each pedestrian
+        if pid not in file_pid_to_fframe[fname]:  # if the pedestrian is not in the file, add it
             file_pid_to_fframe[fname][pid] = fframe
-        else:
+        else:  # if the pedestrian is already in the file, update the start frame
             file_pid_to_fframe[fname][pid] = min(fframe, file_pid_to_fframe[fname][pid])
 
+    # Store fold-wise pedestrian ID sets for each file.
     pool_pedestrians_by_file = {}
     valid_pedestrians_by_file = {}
 
     for fname, ped_dict in file_pid_to_fframe.items():
+        # Sort pedestrians by first appearance so splits are deterministic.
         sorted_pedestrians = sorted(ped_dict.keys(), key=lambda pid: ped_dict[pid])
-        valid_pedestrian_num = int(len(sorted_pedestrians) * valid_ratio)
+        valid_pedestrian_num = int(len(sorted_pedestrians) * valid_ratio) # Number of pedestrians assigned to the valid split in each fold.
         pool_pedestrians_by_fold = []
         valid_pedestrians_by_fold = []
 
+        # Example: valid_ratio=0.2 -> add one valid split to each of 5 p
         num_splits = int(1 / valid_ratio)
 
         for i in range(num_splits):
+            # Take a contiguous chunk for valid in this fold.
             start_idx = i * valid_pedestrian_num
             end_idx = (
                 (i + 1) * valid_pedestrian_num
@@ -186,6 +214,7 @@ def split_pedestrians_by_ratio(
             )
 
             valid_pedestrians = set(sorted_pedestrians[start_idx:end_idx])
+            # Remaining pedestrians go to the pool split.
             pool_pedestrians = set(sorted_pedestrians) - valid_pedestrians
 
             pool_pedestrians_by_fold.append(pool_pedestrians)
@@ -194,6 +223,7 @@ def split_pedestrians_by_ratio(
         pool_pedestrians_by_file[fname] = pool_pedestrians_by_fold
         valid_pedestrians_by_file[fname] = valid_pedestrians_by_fold
 
+    # Convert pedestrian-ID splits back to sample-index splits.
     pool_indices_by_fold, valid_indices_by_fold = [], []
     for i in range(num_splits):
         pool_indices = []
@@ -205,6 +235,7 @@ def split_pedestrians_by_ratio(
                 pool_indices.append(j)
             else:
                 valid_indices.append(j)
+        # Keep one index list per fold for downstream training/evaluation.
         pool_indices_by_fold.append(pool_indices)
         valid_indices_by_fold.append(valid_indices)
 
@@ -302,6 +333,7 @@ def load_processed_data(
     split,
     save_root="processed_data",
     similarity_scope=None,
+    similarity_fold=None,
 ):
     """
     Load processed data from processed_data folder.
@@ -331,9 +363,16 @@ def load_processed_data(
 
     sim_matrix_dicts = None
     if similarity_scope is not None:
-        sim_matrix_dicts = torch.load(
-            os.path.join(save_dir, f"{split}_{similarity_scope}_sim_matrix_dicts.pt")
-        )
+        if similarity_fold is not None:
+            sim_path = os.path.join(
+                save_dir,
+                f"{split}_{similarity_scope}_sim_matrix_dicts_fold_{similarity_fold}.pt",
+            )
+        else:
+            sim_path = os.path.join(
+                save_dir, f"{split}_{similarity_scope}_sim_matrix_dicts.pt"
+            )
+        sim_matrix_dicts = torch.load(sim_path)
 
     return (
         trajs,
@@ -358,19 +397,29 @@ def compute_sim_matrix(
     split="train",
     load_precomputed=False,
     similarity_scope="hist",
+    trajs_columns=None,
+    out_path_override=None,
 ):
     """
     Compute similarity matrices for trajectories (distance & velocity).
+
+    When ``trajs_columns`` is provided, each row uses ``trajs[idx]`` (query)
+    and each column uses ``trajs_columns[idx]`` (candidate), preserving global
+    index order within each file.
     """
 
     sim_matrix_dicts = {}
     sim_items = ["dist", "vel"]
 
+    if trajs_columns is None:
+        trajs_columns = trajs
+
     if load_precomputed:
         print("Loading similarity matrix from file...")
-        sim_matrix_dicts = torch.load(
-            os.path.join(save_dir, f"{split}_{similarity_scope}_sim_matrix_dicts.pt")
+        load_path = out_path_override or os.path.join(
+            save_dir, f"{split}_{similarity_scope}_sim_matrix_dicts.pt"
         )
+        sim_matrix_dicts = torch.load(load_path)
         print("Finished loading similarity matrix.")
     else:
         for item in sim_items:
@@ -378,26 +427,32 @@ def compute_sim_matrix(
 
         def process_file(filename, idxs):
             if similarity_scope == "hist":
-                primary_trajs = [trajs[idx][0, :hist_len, 0, :2] for idx in idxs]
+                primary_rows = [trajs[idx][0, :hist_len, 0, :2] for idx in idxs]
+                primary_cols = [trajs_columns[idx][0, :hist_len, 0, :2] for idx in idxs]
             elif similarity_scope == "seq":
-                primary_trajs = [trajs[idx][0, :, 0, :2] for idx in idxs]
+                primary_rows = [trajs[idx][0, :, 0, :2] for idx in idxs]
+                primary_cols = [trajs_columns[idx][0, :, 0, :2] for idx in idxs]
 
-            primary_trajs = torch.stack(primary_trajs)
-            primary_trajs_target = primary_trajs
+            primary_rows = torch.stack(primary_rows)
+            primary_cols = torch.stack(primary_cols)
 
             dist_matrix = torch.cdist(
-                primary_trajs.view(len(idxs), -1),
-                primary_trajs_target.view(len(idxs), -1),
+                primary_rows.view(len(idxs), -1),
+                primary_cols.view(len(idxs), -1),
             )
-            velocities = primary_trajs[:, 1:] - primary_trajs[:, :-1]
-            velocities_target = primary_trajs_target[:, 1:] - primary_trajs_target[:, :-1]
+            velocities_rows = primary_rows[:, 1:] - primary_rows[:, :-1]
+            velocities_cols = primary_cols[:, 1:] - primary_cols[:, :-1]
             vel_matrix = torch.cdist(
-                velocities.view(len(idxs), -1),
-                velocities_target.view(len(idxs), -1),
+                velocities_rows.view(len(idxs), -1),
+                velocities_cols.view(len(idxs), -1),
             )
 
-            dist_matrix = (dist_matrix - dist_matrix.min()) / (dist_matrix.max() - dist_matrix.min() + 1e-8)
-            vel_matrix = (vel_matrix - vel_matrix.min()) / (vel_matrix.max() - vel_matrix.min() + 1e-8)
+            dist_matrix = (dist_matrix - dist_matrix.min()) / (
+                dist_matrix.max() - dist_matrix.min() + 1e-8
+            )
+            vel_matrix = (vel_matrix - vel_matrix.min()) / (
+                vel_matrix.max() - vel_matrix.min() + 1e-8
+            )
 
             torch.cuda.empty_cache()
 
@@ -414,7 +469,9 @@ def compute_sim_matrix(
             sim_matrix_dicts["dist"][result["filename"]] = result["dist"]
             sim_matrix_dicts["vel"][result["filename"]] = result["vel"]
 
-        out_path = os.path.join(save_dir, f"{split}_{similarity_scope}_sim_matrix_dicts.pt")
+        out_path = out_path_override or os.path.join(
+            save_dir, f"{split}_{similarity_scope}_sim_matrix_dicts.pt"
+        )
         print(out_path)
         torch.save(sim_matrix_dicts, out_path)
 
@@ -625,19 +682,75 @@ def main():
     parser.add_argument("--max_workers", type=int, default=None)
     parser.add_argument("--load_precomputed", action="store_true")
 
+    # Dynamic Cluster Processing (cluster pool and keep validation raw)
+    parser.add_argument(
+        "-dc",
+        "--dynamic_cluster_processing",
+        action="store_true",
+        help="Enable dynamic cluster processing for pool trajectories",
+    )
+    parser.add_argument(
+        "--dc_config",
+        type=str,
+        default="configs/dc_config.yaml",
+        help="Path to dynamic clustering yaml config",
+    )
+    parser.add_argument(
+        "--dual_track_dc",
+        action="store_true",
+        help=(
+            "Keep raw {split}_trajs.pt for val/query; save per-fold DC pool tensors "
+            "and row/col similarity (use with --dc_config). Mutually exclusive with -dc."
+        ),
+    )
+    parser.add_argument(
+        "--preprocess_seed",
+        type=int,
+        default=0,
+        help="Random seed for reproducible pool/valid split and library RNGs.",
+    )
+
+    # reserved: weights for cluster size
+    # parser.add_argument("-csw", "--cluster_size_weight", type=float, default=1.0, help="Weight for cluster size.")
+
     args = parser.parse_args()
+
+    if args.dynamic_cluster_processing and args.dual_track_dc:
+        raise ValueError("Use either --dynamic_cluster_processing (-dc) or --dual_track_dc, not both.")
 
     splits = [s.strip() for s in args.splits.split(",")]
     similarity_scopes = [s.strip() for s in args.similarity_scopes.split(",")]
 
     r, stride = infer_r_stride(args.name)
     save_name = args.name
+    dc_cfg = None
+    if args.dynamic_cluster_processing:
+        save_name = f"{args.name}_clustered"
+        dc_cfg = load_dc_config(args.dc_config)
+    elif args.dual_track_dc:
+        save_name = f"{args.name}_dual_dc"
+        dc_cfg = load_dc_config(args.dc_config)
+
+    split0 = splits[0]
+    dual_layout_dir = os.path.join(args.save_root, f"{args.name}_dual_dc")
+    has_dual_layout = os.path.isfile(
+        os.path.join(dual_layout_dir, f"{split0}_trajs_dc_fold_0.pt")
+    )
+    if (
+        not args.dynamic_cluster_processing
+        and not args.dual_track_dc
+        and args.stage in ["sim_matrix", "traj_sim"]
+        and has_dual_layout
+    ):
+        save_name = f"{args.name}_dual_dc"
+        args.dual_track_dc = True
 
     # -----------------------------
     # Stage 1: Data preprocessing
     # -----------------------------
     if args.stage in ["preprocess", "all"]:
         print("===== Stage 1: preprocess (load_data -> pool/valid split -> save) =====")
+        set_preprocessing_seed(args.preprocess_seed)
         for split in splits:
             print(f"[Preprocess] name={args.name}, split={split}")
 
@@ -661,6 +774,61 @@ def main():
                 valid_ratio=args.valid_ratio,
                 min_prompt_num=args.min_prompt_num,
             )
+
+            if args.dynamic_cluster_processing:
+                clustered = build_clustered_pool_dataset(
+                    trajs=trajs,
+                    masks=masks,
+                    filename_list=filename_list,
+                    frames_list=frames_list,
+                    pedestrians_list=pedestrians_list,
+                    pool_indices_by_fold=pool_indices_by_fold,
+                    valid_indices_by_fold=valid_indices_by_fold,
+                    dc_cfg=dc_cfg,
+                    min_prompt_num=args.min_prompt_num,
+                )
+                trajs = clustered.trajs
+                masks = clustered.masks
+                filename_list = clustered.filename_list
+                frames_list = clustered.frames_list
+                pedestrians_list = clustered.pedestrians_list
+                filename2idxs_dict = clustered.filename2idxs_dict
+                idx2filename_dict = clustered.idx2filename_dict
+                pool_indices_by_fold = clustered.pool_indices_by_fold
+                valid_indices_by_fold = clustered.valid_indices_by_fold
+                config["dynamic_cluster_processing"] = True
+                config["dynamic_cluster_config"] = dc_cfg
+                config["clustered_pool_total"] = int(
+                    sum(len(pool_indices) for pool_indices in pool_indices_by_fold)
+                )
+                save_dir = os.path.join(args.save_root, save_name)
+                os.makedirs(save_dir, exist_ok=True)
+                pickle_dump(
+                    clustered.cluster_meta_by_fold,
+                    os.path.join(save_dir, f"{split}_cluster_meta_by_fold.pickle"),
+                )
+            elif args.dual_track_dc:
+                config["dual_track_dc"] = True
+                config["preprocess_seed"] = int(args.preprocess_seed)
+                config["dynamic_cluster_config"] = dc_cfg
+                trajs_dc_by_fold, cluster_meta_by_fold = build_trajs_dc_aligned_per_fold(
+                    trajs=trajs,
+                    masks=masks,
+                    filename_list=filename_list,
+                    pool_indices_by_fold=pool_indices_by_fold,
+                    dc_cfg=dc_cfg,
+                )
+                save_dir = os.path.join(args.save_root, save_name)
+                os.makedirs(save_dir, exist_ok=True)
+                for fold_k, dc_bundle in enumerate(trajs_dc_by_fold):
+                    torch.save(
+                        dc_bundle,
+                        os.path.join(save_dir, f"{split}_trajs_dc_fold_{fold_k}.pt"),
+                    )
+                pickle_dump(
+                    cluster_meta_by_fold,
+                    os.path.join(save_dir, f"{split}_cluster_meta_by_fold.pickle"),
+                )
 
             save_data(
                 save_name,
@@ -704,15 +872,43 @@ def main():
 
             for similarity_scope in similarity_scopes:
                 print(f"  -> similarity_scope={similarity_scope}")
-                compute_sim_matrix(
-                    trajs,
-                    filename2idxs_dict,
-                    hist_len=args.hist_len,
-                    save_dir=save_dir,
-                    split=split,
-                    load_precomputed=args.load_precomputed,
-                    similarity_scope=similarity_scope,
-                )
+                if args.dual_track_dc:
+                    num_folds = len(pool_indices_by_fold)
+                    for fold_k in range(num_folds):
+                        trajs_dc_path = os.path.join(
+                            save_dir, f"{split}_trajs_dc_fold_{fold_k}.pt"
+                        )
+                        dc_bundle = torch.load(trajs_dc_path)
+                        if isinstance(dc_bundle, dict):
+                            trajs_dc = dc_bundle["trajs"]
+                        else:
+                            trajs_dc = dc_bundle
+                        out_fold = os.path.join(
+                            save_dir,
+                            f"{split}_{similarity_scope}_sim_matrix_dicts_fold_{fold_k}.pt",
+                        )
+                        print(f"  -> fold={fold_k}, out={out_fold}")
+                        compute_sim_matrix(
+                            trajs,
+                            filename2idxs_dict,
+                            hist_len=args.hist_len,
+                            save_dir=save_dir,
+                            split=split,
+                            load_precomputed=args.load_precomputed,
+                            similarity_scope=similarity_scope,
+                            trajs_columns=trajs_dc,
+                            out_path_override=out_fold,
+                        )
+                else:
+                    compute_sim_matrix(
+                        trajs,
+                        filename2idxs_dict,
+                        hist_len=args.hist_len,
+                        save_dir=save_dir,
+                        split=split,
+                        load_precomputed=args.load_precomputed,
+                        similarity_scope=similarity_scope,
+                    )
 
     # -----------------------------
     # Stage 3: Build similar trajectory dictionaries
@@ -736,13 +932,22 @@ def main():
                     pedestrians_list,
                     valid_indices_by_fold,
                     pool_indices_by_fold,
-                    sim_matrix_dicts,
+                    _sim_skip,
                 ) = load_processed_data(
                     save_name,
                     split,
                     args.save_root,
-                    similarity_scope=similarity_scope,
+                    similarity_scope=None,
                 )
+
+                sim_matrix_dicts_shared = None
+                if not args.dual_track_dc:
+                    _, _, _, _, _, _, _, _, _, sim_matrix_dicts_shared = load_processed_data(
+                        save_name,
+                        split,
+                        args.save_root,
+                        similarity_scope=similarity_scope,
+                    )
 
                 similar_traj_dicts = []
                 similar_scores_dicts = []
@@ -751,6 +956,15 @@ def main():
                     zip(valid_indices_by_fold, pool_indices_by_fold)
                 ):
                     print(f"  Fold {i}: pool={len(pool_indices)}, valid={len(valid_indices)}")
+
+                    if args.dual_track_dc:
+                        sim_path = os.path.join(
+                            save_dir,
+                            f"{split}_{similarity_scope}_sim_matrix_dicts_fold_{i}.pt",
+                        )
+                        sim_matrix_dicts = torch.load(sim_path)
+                    else:
+                        sim_matrix_dicts = sim_matrix_dicts_shared
 
                     similar_traj_dict, similar_scores_dict = compute_trajectory_similarity(
                         filename2idxs_dict,

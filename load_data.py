@@ -1,14 +1,26 @@
+import os
 import pickle
 from collections import defaultdict
-from typing import List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
 
 def load_processed_data(
-    split,
-    name,
-):
+    split: str,
+    name: str,
+) -> Tuple[
+    List[torch.Tensor],
+    List[torch.Tensor],
+    Any,
+    Any,
+    List[List[int]],
+    List[List[int]],
+    Any,
+    Any,
+    Optional[List[Dict[str, List[torch.Tensor]]]],
+]:
+    """Load tensors, index pickles, similarity dicts, and optional DC pool bundles."""
     save_dir = f"processed_data/{name}"
     # split = "val"
     trajs = torch.load(f"{save_dir}/{split}_trajs.pt")
@@ -46,9 +58,21 @@ def load_processed_data(
     similarity_dicts_seq = None
     with open(
         f"{save_dir}/{split}_similar_traj_dicts_seq.pickle",
-            mode="br",
+        mode="br",
     ) as fi:
         similarity_dicts_seq = pickle.load(fi)
+
+    trajs_dc_by_fold: Optional[List[Dict[str, List[torch.Tensor]]]] = None
+    fold_k = 0
+    while os.path.isfile(os.path.join(save_dir, f"{split}_trajs_dc_fold_{fold_k}.pt")):
+        bundle = torch.load(os.path.join(save_dir, f"{split}_trajs_dc_fold_{fold_k}.pt"))
+        if trajs_dc_by_fold is None:
+            trajs_dc_by_fold = []
+        if isinstance(bundle, dict):
+            trajs_dc_by_fold.append(bundle)
+        else:
+            trajs_dc_by_fold.append({"trajs": bundle, "masks": None})
+        fold_k += 1
 
     return (
         trajs,
@@ -59,6 +83,7 @@ def load_processed_data(
         valid_indices_by_fold,
         similarity_dicts,
         similarity_dicts_seq,
+        trajs_dc_by_fold,
     )
 
 

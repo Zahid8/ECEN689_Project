@@ -9,6 +9,13 @@ from load_data import load_processed_data
 
 
 class Dataset(torch.utils.data.Dataset):
+    """Trajectory ICL dataset.
+
+    When ``processed_data/{name}/{split}_trajs_dc_fold_*.pt`` exists, example
+    prompts are read from the per-fold DC tensors while the query (last slot)
+    always uses raw ``{split}_trajs.pt`` trajectories and masks.
+    """
+
     def __init__(
         self,
         name="motsynth_loc",
@@ -37,6 +44,7 @@ class Dataset(torch.utils.data.Dataset):
             self.valid_indices_by_fold,
             self.similarity_dicts,
             self.similarity_dicts_seq,
+            self.trajs_dc_by_fold,
         ) = load_processed_data(
             split,
             name,
@@ -81,11 +89,24 @@ class Dataset(torch.utils.data.Dataset):
 
         trajs_list = []
         masks_list = []
-        for example_idx in example_idxs:
-            traj_example = self.trajs[example_idx]
-            mask_example = self.masks[example_idx]
-            trajs_list.append(traj_example)
-            masks_list.append(mask_example)
+        if self.trajs_dc_by_fold is not None:
+            dc_bundle = self.trajs_dc_by_fold[fold]
+            trajs_dc = dc_bundle["trajs"]
+            masks_dc = dc_bundle.get("masks")
+            for example_idx in example_idxs:
+                traj_example = trajs_dc[example_idx]
+                if masks_dc is not None:
+                    mask_example = masks_dc[example_idx]
+                else:
+                    mask_example = self.masks[example_idx]
+                trajs_list.append(traj_example)
+                masks_list.append(mask_example)
+        else:
+            for example_idx in example_idxs:
+                traj_example = self.trajs[example_idx]
+                mask_example = self.masks[example_idx]
+                trajs_list.append(traj_example)
+                masks_list.append(mask_example)
         trajs_list.append(traj)
         masks_list.append(mask)
 
