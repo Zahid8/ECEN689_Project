@@ -108,6 +108,7 @@ def _plot_past_and_neighbors(
     target_past: torch.Tensor,
     surrounding_past: torch.Tensor,
     use_legend: bool,
+    plot_neighbors: bool = True,
 ) -> None:
     """Plot target (blue) and surrounding agents (black) with at most one label each.
 
@@ -122,17 +123,19 @@ def _plot_past_and_neighbors(
         linewidth=2.0,
         label="target past" if use_legend else None,
     )
-    for k in range(surrounding_past.shape[0]):
-        ag = surrounding_past[k]
-        ag = ag.cpu() if torch.is_tensor(ag) else ag
-        ax.plot(
-            ag[:, 0],
-            ag[:, 1],
-            color="black",
-            linewidth=1.0,
-            alpha=0.8,
-            label="surrounding" if (use_legend and k == 0) else None,
-        )
+
+    if plot_neighbors:
+        for k in range(surrounding_past.shape[0]):
+            ag = surrounding_past[k]
+            ag = ag.cpu() if torch.is_tensor(ag) else ag
+            ax.plot(
+                ag[:, 0],
+                ag[:, 1],
+                color="black",
+                linewidth=1.0,
+                alpha=0.8,
+                label="surrounding" if (use_legend and k == 0) else None,
+            )
 
 
 def _plot_step1_predictions_subset(
@@ -302,7 +305,7 @@ def _visualize_one(
     )
     ax2.set_title("step 2 (STES + PG-ES)")
 
-    _plot_past_and_neighbors(ax3, target_past, surrounding_past, use_legend=True)
+    _plot_past_and_neighbors(ax3, target_past, surrounding_past, use_legend=True, plot_neighbors=False)
     ax3.plot(
         pred_best[:, 0],
         pred_best[:, 1],
