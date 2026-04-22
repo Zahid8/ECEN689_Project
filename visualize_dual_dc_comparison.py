@@ -154,10 +154,23 @@ def draw_query_with_topk(
 ) -> None:
     """Draw one panel: query trajectory + top-k similar pool trajectories."""
     similar_indices = similarity_dict[query_idx][:top_k]
+    cmap = plt.cm.Blues
+    n_similar = max(1, len(similar_indices))
     for rank, pool_idx in enumerate(similar_indices):
         px, py = get_primary_xy(pool_trajs[pool_idx], pool_masks[pool_idx])
         if len(px) > 0:
-            ax.plot(px, py, linewidth=1.1, alpha=0.6, label=f"pool#{rank + 1}")
+            # Earlier ranks are darker; later ranks are lighter.
+            shade = 0.85 - 0.55 * (rank / n_similar)
+            line_color = cmap(shade)
+            line_alpha = 0.95 - 0.55 * (rank / n_similar)
+            ax.plot(
+                px,
+                py,
+                linewidth=1.1,
+                alpha=max(0.2, line_alpha),
+                color=line_color,
+                label=f"pool#{rank + 1}",
+            )
 
     qx, qy = get_primary_xy(query_trajs[query_idx], query_masks[query_idx])
     if len(qx) > 0:
@@ -280,10 +293,11 @@ def main() -> None:
             seed=args.seed,
         )
 
-    fig, axes = plt.subplots(args.n_queries, 2, figsize=(13, 4 * args.n_queries), squeeze=False)
-    for row, query_idx in enumerate(query_indices):
+    fig_width = max(12, 4.2 * args.n_queries)
+    fig, axes = plt.subplots(2, args.n_queries, figsize=(fig_width, 8), squeeze=False)
+    for col, query_idx in enumerate(query_indices):
         draw_query_with_topk(
-            ax=axes[row][0],
+            ax=axes[0][col],
             query_idx=query_idx,
             query_trajs=raw_trajs,
             query_masks=raw_masks,
@@ -294,7 +308,7 @@ def main() -> None:
             title=f"Raw Pool | fold={fold} | query={query_idx}",
         )
         draw_query_with_topk(
-            ax=axes[row][1],
+            ax=axes[1][col],
             query_idx=query_idx,
             query_trajs=dc_trajs_raw,
             query_masks=dc_masks_raw,
@@ -312,7 +326,7 @@ def main() -> None:
                 for raw_member_idx in members:
                     px, py = get_primary_xy(raw_trajs[raw_member_idx], raw_masks[raw_member_idx])
                     if len(px) > 0:
-                        axes[row][1].plot(px, py, linewidth=0.6, alpha=0.22, color="gray")
+                        axes[1][col].plot(px, py, linewidth=0.6, alpha=0.22, color="gray")
         if args.debug_clusters and len(dc_cluster_meta) > 0:
             debug_lines = build_dc_debug_lines(
                 query_idx=query_idx,
