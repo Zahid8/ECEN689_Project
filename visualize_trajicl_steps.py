@@ -146,7 +146,11 @@ def _plot_step1_predictions_subset(
     num_curves: int,
     use_legend: bool,
 ) -> None:
-    """Draw a subset of first-stage (STES) future modes in green (unscaled, query frame)."""
+    """Draw a subset of first-stage (STES) future modes in green (unscaled, query frame).
+
+    Each mode is one continuous polyline from the last history point to the full
+    predicted future so there is no visual gap.
+    """
     pred1 = pred1.detach().float().cpu()
     hist_target = hist_target.detach().float().cpu()
     k_all = int(pred1.shape[0])
@@ -161,26 +165,20 @@ def _plot_step1_predictions_subset(
         for ri in raw_idx:
             if ri not in mode_indices:
                 mode_indices.append(ri)
-    past_end = hist_target[-1] / float(resize)
+    past_end = (hist_target[-1] / float(resize)).float()
     label_used = False
     for mi in mode_indices:
-        pred_u = (pred1[mi] / float(resize)).numpy()
+        pred_u = (pred1[mi] / float(resize)).float()
+        pts = torch.cat([past_end.unsqueeze(0), pred_u], dim=0)
         ax.plot(
-            [past_end[0].item(), pred_u[0, 0]],
-            [past_end[1].item(), pred_u[0, 1]],
+            pts[:, 0].numpy(),
+            pts[:, 1].numpy(),
             color="green",
-            linewidth=1.0,
-            alpha=0.6,
+            linewidth=1.2,
+            alpha=0.65,
             label="stage-1 pred" if (use_legend and not label_used) else None,
         )
         label_used = True
-        ax.plot(
-            pred_u[:, 0],
-            pred_u[:, 1],
-            color="green",
-            linewidth=1.2,
-            alpha=0.6,
-        )
 
 
 def _plot_example_histories(
@@ -192,8 +190,9 @@ def _plot_example_histories(
     hist_len: int,
     use_legend: bool,
     legend_label: str = "example",
+    fut_len: int = 0,
 ) -> None:
-    """Plot example primary past trajectories in gray (label once).
+    """Plot example primary trajectories in gray (label once), past through future.
 
     Args:
         ax: Matplotlib axes.
@@ -204,14 +203,18 @@ def _plot_example_histories(
         hist_len: History length in time steps.
         use_legend: Whether to attach a legend entry to the first curve.
         legend_label: Legend text for the first example curve.
+        fut_len: Future horizon; when positive, plot ``hist_len + fut_len`` as one
+            continuous polyline (no gap between last past and first future).
     """
     for j, example_idx in enumerate(example_indices):
         traj_example, _ = get_pool_example(dataset, fold, example_idx)
         seq = traj_example[0, :, 0, :2].float() - query_origin
-        seq_hist = seq[:hist_len].cpu()
+        end_t = hist_len + fut_len if fut_len > 0 else hist_len
+        end_t = min(end_t, int(seq.shape[0]))
+        seq_plot = seq[:end_t].cpu()
         ax.plot(
-            seq_hist[:, 0],
-            seq_hist[:, 1],
+            seq_plot[:, 0],
+            seq_plot[:, 1],
             color="gray",
             linewidth=1.0,
             alpha=0.5,
@@ -241,25 +244,26 @@ def _visualize_one(
     pred2_multimodal: torch.Tensor,
     gt_fut: torch.Tensor,
     hist_target: torch.Tensor,
-    surrounding_hist: torch.Tensor,
+    neighbor_traj_unscaled: torch.Tensor,
     resize: float,
     num_step1_viz: int,
     output_path: str,
 ) -> None:
     """Render three subplots: STES, STES+PG-ES context with stage-1 preds, final minADE pred vs GT.
 
-    ``hist_target`` / ``surrounding_hist`` are from ``batch_process_coords`` (query
-    channel); plots use unscaled coordinates (``/ resize``) so they match
-    ``pred1`` / ``pred2`` after division by ``resize``.
+    ``hist_target`` is the query primary history from ``batch_process_coords``;
+    ``neighbor_traj_unscaled`` is neighbor hist+future in the same unscaled frame
+    (``/ resize``). Plots match ``pred1`` / ``pred2`` after division by ``resize``.
     """
     hist_len = int(dataset.hist_len)
     query_traj = dataset.trajs[query_idx]
     _, _, query_origin = _extract_scene_past(query_traj, hist_len=hist_len)
-    target_past = hist_target / float(resize)
-    if surrounding_hist.numel() > 0:
-        surrounding_past = (surrounding_hist / float(resize)).permute(1, 0, 2)
+    target_past = (hist_target / float(resize)).detach().cpu()
+    if neighbor_traj_unscaled.numel() > 0:
+        surrounding_past = neighbor_traj_unscaled.detach().cpu()
     else:
-        surrounding_past = torch.empty(0, hist_len, 2, dtype=target_past.dtype)
+        fut_len = int(dataset.fut_len)
+        surrounding_past = torch.empty(0, hist_len + fut_len, 2, dtype=target_past.dtype)
 
     with torch.no_grad():
         _, min_idx = mse_primary_min_ade_loss(pred2_multimodal, gt_fut)
@@ -280,6 +284,7 @@ def _visualize_one(
         hist_len,
         use_legend=True,
         legend_label="STES example",
+        fut_len=int(dataset.fut_len),
     )
     ax1.set_title("step 1 (STES)")
 
@@ -302,20 +307,25 @@ def _visualize_one(
         hist_len,
         use_legend=True,
         legend_label="PG-ES example",
+        fut_len=int(dataset.fut_len),
     )
     ax2.set_title("step 2 (STES + PG-ES)")
 
     _plot_past_and_neighbors(ax3, target_past, surrounding_past, use_legend=True, plot_neighbors=False)
+
+    anchor = target_past[-1].unsqueeze(0)
+    pred_line = torch.cat([anchor, pred_best.float()], dim=0)
     ax3.plot(
-        pred_best[:, 0],
-        pred_best[:, 1],
+        pred_line[:, 0].numpy(),
+        pred_line[:, 1].numpy(),
         color="green",
         linewidth=2.2,
         label="prediction",
     )
+    gt_line = torch.cat([anchor, gt_cpu.float()], dim=0)
     ax3.plot(
-        gt_cpu[:, 0],
-        gt_cpu[:, 1],
+        gt_line[:, 0].numpy(),
+        gt_line[:, 1].numpy(),
         color="red",
         linewidth=2.2,
         label="ground truth",
@@ -371,15 +381,19 @@ def main() -> None:
     pred1, _ = run_single_inference(cfg, model, trajs1, masks1, pad1)
     pred1 = pred1[0]  # [K, T, 2] on device
 
-    hist_trajs, _, _, _, _, _ = batch_process_coords(
+    hist_trajs, _, fut_trajs, _, _, _ = batch_process_coords(
         trajs1, masks1, pad1, cfg, training=False, eval_robust=False
     )
     hist_target = hist_trajs[0, -1, :, 0]  # [hist_len, 2] on device, query channel
+    resize_f = float(cfg.training.resize)
     n_agent = int(hist_trajs.shape[3])
     if n_agent > 1:
-        surrounding_hist = hist_trajs[0, -1, :, 1:, :]
+        nh = hist_trajs[0, -1, :, 1:, :]
+        nf = fut_trajs[0, -1, :, 1:, :]
+        neighbor_hist_fut = torch.cat([nh, nf], dim=0) / resize_f
+        neighbor_traj_unscaled = neighbor_hist_fut.permute(1, 0, 2)
     else:
-        surrounding_hist = hist_trajs.new_empty(0)
+        neighbor_traj_unscaled = hist_trajs.new_empty(0)
 
     step2_ids = select_step2_examples_with_pges(
         dataset_val,
@@ -406,8 +420,8 @@ def main() -> None:
         pred2,
         gt,
         hist_target,
-        surrounding_hist,
-        float(cfg.training.resize),
+        neighbor_traj_unscaled,
+        resize_f,
         int(args.num_step1_viz),
         args.output,
     )
