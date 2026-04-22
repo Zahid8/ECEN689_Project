@@ -1,20 +1,28 @@
 import argparse
 import os
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, List, Tuple
 
 import matplotlib.pyplot as plt
 import torch
 from omegaconf import OmegaConf
 
-from dataset import batch_process_coords, collate_batch
-from helper import set_seed
+from dataset import batch_process_coords, create_dataset
+from helper import (
+    build_single_query_input,
+    get_pool_example,
+    run_single_inference,
+    select_step1_examples_stes,
+    select_step2_examples_with_pges,
+    set_seed,
+)
 from model import create_model
+from utils.metrics import mse_primary_min_ade_loss
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for TrajICL step visualization."""
     parser = argparse.ArgumentParser(
-        description="Visualize TrajICL two-step prompting and prediction on val split."
+        description="Visualize TrajICL two-step prompting and prediction on val split (one figure)."
     )
     parser.add_argument(
         "--model_path",
@@ -32,31 +40,25 @@ def parse_args() -> argparse.Namespace:
         "--prompting_method",
         type=str,
         default="sim",
-        help="Prompting method of first-step retrieval (random/sim).",
+        help="Prompting for first-step retrieval: random or sim (STES).",
     )
     parser.add_argument(
         "--num_example",
         type=int,
         default=4,
-        help="Number of prompts in each step.",
-    )
-    parser.add_argument(
-        "--num_samples",
-        type=int,
-        default=5,
-        help="How many val queries to visualize.",
+        help="Number of in-context examples (M) in each step.",
     )
     parser.add_argument(
         "--start_index",
         type=int,
         default=0,
-        help="Start sample index in val valid list.",
+        help="Val sample index in valid list for the one figure.",
     )
     parser.add_argument(
-        "--candidate_pool_size",
+        "--pges_candidate_top_n",
         type=int,
         default=128,
-        help="Second-step retrieval candidates from top sequence neighbors.",
+        help="STES top-N pool used before PG-ES (same as eval).",
     )
     parser.add_argument(
         "--device",
@@ -71,263 +73,157 @@ def parse_args() -> argparse.Namespace:
         help="Random seed.",
     )
     parser.add_argument(
-        "--output_dir",
+        "--output",
         type=str,
-        default="results/trajicl_steps",
-        help="Directory to save figures.",
+        default="results/trajicl_steps/trajicl_step_viz.png",
+        help="Path to save the single output figure.",
     )
     return parser.parse_args()
 
 
-def build_val_dataset(cfg: Any):
-    """Create dataset directly to keep query index/fold mapping."""
-    from dataset import create_dataset
-
-    return create_dataset(split="val", cfg=cfg)
-
-
-def get_prompt_from_dataset(dataset: Any, fold: int, example_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Fetch one example trajectory/mask by prompt index from current fold."""
-    if dataset.pool_dc_by_fold is not None:
-        pool_bundle = dataset.pool_dc_by_fold[fold]
-        return pool_bundle["trajs"][example_idx], pool_bundle["masks"][example_idx]
-    if dataset.trajs_dc_by_fold is not None:
-        dc_bundle = dataset.trajs_dc_by_fold[fold]
-        traj_example = dc_bundle["trajs"][example_idx]
-        masks_dc = dc_bundle.get("masks")
-        if masks_dc is not None:
-            return traj_example, masks_dc[example_idx]
-        return traj_example, dataset.masks[example_idx]
-    return dataset.trajs[example_idx], dataset.masks[example_idx]
-
-
-def build_input_from_indices(
-    dataset: Any,
-    fold: int,
-    query_idx: int,
-    example_indices: Sequence[int],
+def _extract_scene_past(
+    query_traj: torch.Tensor, hist_len: int
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Build (trajs, masks, padding_mask) with examples + query as one-item batch."""
-    trajs_list: List[torch.Tensor] = []
-    masks_list: List[torch.Tensor] = []
-    for example_idx in example_indices:
-        traj_example, mask_example = get_prompt_from_dataset(dataset, fold, example_idx)
-        trajs_list.append(traj_example)
-        masks_list.append(mask_example)
-
-    trajs_list.append(dataset.trajs[query_idx])
-    masks_list.append(dataset.masks[query_idx])
-
-    trajs, masks, padding_mask = collate_batch([(trajs_list, masks_list)])
-    return trajs, masks, padding_mask
+    """Target past, surrounding past, and raw origin (last hist frame) of query primary."""
+    query_xy = query_traj[:, :, 0, :2].float()
+    origin = query_xy[0, hist_len - 1 : hist_len]
+    centered = query_xy - origin
+    target_past = centered[0, :hist_len]
+    n_agents = int(query_traj.shape[0])
+    if n_agents > 1:
+        surrounding_past = centered[1:, :hist_len]
+    else:
+        surrounding_past = torch.empty(0, hist_len, 2, dtype=target_past.dtype)
+    return target_past, surrounding_past, origin.squeeze(0)
 
 
-def infer_one_step(
-    cfg: Any,
-    model: torch.nn.Module,
-    trajs: torch.Tensor,
-    masks: torch.Tensor,
-    padding_mask: torch.Tensor,
-) -> Dict[str, torch.Tensor]:
-    """Run one model forward and return key tensors for plotting."""
-    hist_trajs, _, fut_trajs, _, example_rel_pos, padding_mask = batch_process_coords(
-        trajs,
-        masks,
-        padding_mask,
-        cfg,
-        training=False,
-        eval_robust=False,
+def _plot_past_and_neighbors(
+    ax: Any,
+    target_past: torch.Tensor,
+    surrounding_past: torch.Tensor,
+    use_legend: bool,
+) -> None:
+    """Plot target (blue) and surrounding agents (black) with at most one label each."""
+    ax.plot(
+        target_past[:, 0],
+        target_past[:, 1],
+        color="blue",
+        linewidth=2.0,
+        label="target past" if use_legend else None,
     )
-    with torch.no_grad():
-        output = model(
-            hist_trajs,
-            fut_trajs.clone(),
-            padding_mask,
-            training=False,
-            example_primary_rel_pos=example_rel_pos,
+    for k in range(surrounding_past.shape[0]):
+        ag = surrounding_past[k]
+        ax.plot(
+            ag[:, 0],
+            ag[:, 1],
+            color="black",
+            linewidth=1.0,
+            alpha=0.8,
+            label="surrounding" if (use_legend and k == 0) else None,
         )
-    return {
-        "hist_trajs": hist_trajs,
-        "fut_trajs": fut_trajs,
-        "pred": output["primary_pred_fut_traj"],
-    }
 
 
-def select_pred_mode(pred: torch.Tensor) -> torch.Tensor:
-    """Pick one mode for visualization."""
-    # pred: [1, K, T, 2]
-    return pred[0, 0].detach().cpu()
-
-
-def get_first_step_example_indices(
+def _plot_example_histories(
+    ax: Any,
     dataset: Any,
     fold: int,
-    query_idx: int,
-    num_example: int,
-    prompting_method: str,
-) -> List[int]:
-    """Use dataset prompting policy for step-1 retrieval."""
-    if prompting_method == "random":
-        import random
-
-        candidates = list(dataset.similarity_dicts[fold][query_idx])
-        if len(candidates) == 0 or num_example <= 0:
-            return []
-        k = min(num_example, len(candidates))
-        return random.sample(candidates, k)
-
-    candidates = list(dataset.similarity_dicts[fold][query_idx])
-    k = min(num_example, len(candidates))
-    return candidates[:k][::-1]
-
-
-def get_primary_seq_local(traj: torch.Tensor, hist_len: int) -> torch.Tensor:
-    """Get primary trajectory [T,2] in local coordinates (current history frame as origin)."""
-    seq = traj[0, :, 0, :2].float()
-    origin = seq[hist_len - 1 : hist_len]
-    return seq - origin
-
-
-def second_step_retrieval(
-    dataset: Any,
-    fold: int,
-    query_idx: int,
-    pred_step1_all: torch.Tensor,
-    hist_target: torch.Tensor,
-    num_example: int,
-    candidate_pool_size: int,
-) -> List[int]:
-    """Retrieve step-2 prompts via PG-ES min-k distance."""
-    if num_example <= 0:
-        return []
-
-    candidate_indices = list(dataset.similarity_dicts[fold][query_idx])[:candidate_pool_size]
-    if len(candidate_indices) == 0:
-        return []
-
-    pred_step1_all = pred_step1_all.detach()
-    hist_target = hist_target.detach().to(pred_step1_all.device)
-    query_seq_by_k = torch.cat(
-        [hist_target.unsqueeze(0).repeat(pred_step1_all.shape[0], 1, 1), pred_step1_all],
-        dim=1,
-    )  # [K, T, 2]
-
-    hist_len = int(dataset.hist_len)
-    candidate_seq_list: List[torch.Tensor] = []
-    valid_candidate_indices: List[int] = []
-    for candidate_idx in candidate_indices:
-        candidate_traj, _ = get_prompt_from_dataset(dataset, fold, candidate_idx)
-        candidate_seq = get_primary_seq_local(candidate_traj, hist_len=hist_len)
-        candidate_seq_list.append(candidate_seq)
-        valid_candidate_indices.append(candidate_idx)
-
-    if len(candidate_seq_list) == 0:
-        return []
-
-    candidate_tensor = torch.stack(candidate_seq_list, dim=0).to(pred_step1_all.device)  # [M, T, 2]
-    steps = min(candidate_tensor.shape[1], query_seq_by_k.shape[1])
-    candidate_tensor = candidate_tensor[:, :steps]
-    query_seq_by_k = query_seq_by_k[:, :steps]
-
-    diff = candidate_tensor.unsqueeze(1) - query_seq_by_k.unsqueeze(0)  # [M, K, T, 2]
-    dist = torch.norm(diff, p=2, dim=-1).mean(dim=-1)  # [M, K]
-    min_k_dist = torch.min(dist, dim=1).values  # [M]
-
-    top_m = min(num_example, len(valid_candidate_indices))
-    selected_positions = torch.topk(-min_k_dist, k=top_m).indices.tolist()
-    return [valid_candidate_indices[pos] for pos in selected_positions]
-
-
-def extract_scene_for_plot(query_traj: torch.Tensor, hist_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Return target past and surrounding past in target-centric coordinates."""
-    xy = query_traj[:, :, 0, :2].float()
-    origin = xy[0, hist_len - 1 : hist_len]
-    xy = xy - origin
-    target_past = xy[0, :hist_len]
-    surrounding_past = xy[1:, :hist_len] if xy.shape[0] > 1 else torch.empty(0, hist_len, 2)
-    return target_past, surrounding_past
-
-
-def plot_example_primary(
-    ax: plt.Axes,
-    dataset: Any,
-    fold: int,
-    example_indices: Sequence[int],
+    example_indices: List[int],
     query_origin: torch.Tensor,
     hist_len: int,
+    use_legend: bool,
 ) -> None:
-    """Plot selected example primary trajectories in gray."""
-    for example_idx in example_indices:
-        traj_example, _ = get_prompt_from_dataset(dataset, fold, example_idx)
+    """Plot example primary past trajectories in gray (label once)."""
+    for j, example_idx in enumerate(example_indices):
+        traj_example, _ = get_pool_example(dataset, fold, example_idx)
         seq = traj_example[0, :, 0, :2].float() - query_origin
         seq_hist = seq[:hist_len].cpu()
-        ax.plot(seq_hist[:, 0], seq_hist[:, 1], color="gray", linewidth=1.0, alpha=0.9)
+        ax.plot(
+            seq_hist[:, 0],
+            seq_hist[:, 1],
+            color="gray",
+            linewidth=1.0,
+            alpha=0.9,
+            label="example" if (use_legend and j == 0) else None,
+        )
 
 
-def visualize_sample(
+def _save_legended_axes(fig: Any, axes_row: List[Any]) -> None:
+    for ax in axes_row:
+        handles, labels = ax.get_legend_handles_labels()
+        uniq = {}
+        for h, la in zip(handles, labels):
+            if la and la not in uniq:
+                uniq[la] = h
+        if uniq:
+            ax.legend(uniq.values(), uniq.keys(), loc="best", fontsize=8)
+    fig.tight_layout()
+
+
+def _visualize_one(
     dataset: Any,
     fold: int,
     query_idx: int,
-    step1_example_indices: Sequence[int],
-    step2_example_indices: Sequence[int],
-    pred_step1_all: torch.Tensor,
-    pred_step2: torch.Tensor,
+    step1_ids: List[int],
+    step2_ids: List[int],
+    pred2_multimodal: torch.Tensor,
     gt_fut: torch.Tensor,
     output_path: str,
 ) -> None:
-    """Generate and save 3-panel visualization for one query."""
+    """Render three subplots: step1, step2 (layout only), result (minADE mode vs GT)."""
     hist_len = int(dataset.hist_len)
     query_traj = dataset.trajs[query_idx]
-    query_xy = query_traj[:, :, 0, :2].float()
-    query_origin = query_xy[0, hist_len - 1]
-    target_past, surrounding_past = extract_scene_for_plot(query_traj, hist_len=hist_len)
+    target_past, surrounding_past, query_origin = _extract_scene_past(
+        query_traj, hist_len=hist_len
+    )
+
+    with torch.no_grad():
+        _, min_idx = mse_primary_min_ade_loss(pred2_multimodal, gt_fut)
+    mode_i = int(min_idx[0].item())
+    pred_best = pred2_multimodal[0, mode_i].detach().cpu()
+    gt_cpu = gt_fut[0].detach().cpu()
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), squeeze=False)
     ax1, ax2, ax3 = axes[0]
 
-    # Step 1
-    ax1.plot(target_past[:, 0], target_past[:, 1], color="blue", linewidth=2.0)
-    for agent_idx in range(surrounding_past.shape[0]):
-        agent = surrounding_past[agent_idx]
-        ax1.plot(agent[:, 0], agent[:, 1], color="black", linewidth=1.0, alpha=0.8)
-    plot_example_primary(ax1, dataset, fold, step1_example_indices, query_origin, hist_len)
+    _plot_past_and_neighbors(ax1, target_past, surrounding_past, use_legend=True)
+    _plot_example_histories(ax1, dataset, fold, step1_ids, query_origin, hist_len, use_legend=True)
     ax1.set_title("step 1")
 
-    # Step 2
-    ax2.plot(target_past[:, 0], target_past[:, 1], color="blue", linewidth=2.0)
-    for agent_idx in range(surrounding_past.shape[0]):
-        agent = surrounding_past[agent_idx]
-        ax2.plot(agent[:, 0], agent[:, 1], color="black", linewidth=1.0, alpha=0.8)
-    pred1_all = pred_step1_all.detach().cpu()
-    for mode_idx in range(pred1_all.shape[0]):
-        pred1 = pred1_all[mode_idx]
-        link_x = [target_past[-1, 0].item(), pred1[0, 0].item()]
-        link_y = [target_past[-1, 1].item(), pred1[0, 1].item()]
-        ax2.plot(link_x, link_y, color="green", linewidth=1.0, alpha=0.55)
-        ax2.plot(pred1[:, 0], pred1[:, 1], color="green", linewidth=1.2, alpha=0.55)
-    plot_example_primary(ax2, dataset, fold, step2_example_indices, query_origin, hist_len)
+    _plot_past_and_neighbors(ax2, target_past, surrounding_past, use_legend=True)
+    _plot_example_histories(ax2, dataset, fold, step2_ids, query_origin, hist_len, use_legend=True)
     ax2.set_title("step 2")
 
-    # Result
-    pred2 = pred_step2.detach().cpu()
-    gt = gt_fut.detach().cpu()
-    ax3.plot(target_past[:, 0], target_past[:, 1], color="blue", linewidth=1.7, alpha=0.8)
-    ax3.plot(pred2[:, 0], pred2[:, 1], color="green", linewidth=2.3)
-    ax3.plot(gt[:, 0], gt[:, 1], color="red", linewidth=2.3)
+    _plot_past_and_neighbors(ax3, target_past, surrounding_past, use_legend=True)
+    ax3.plot(
+        pred_best[:, 0],
+        pred_best[:, 1],
+        color="green",
+        linewidth=2.2,
+        label="prediction",
+    )
+    ax3.plot(
+        gt_cpu[:, 0],
+        gt_cpu[:, 1],
+        color="red",
+        linewidth=2.2,
+        label="ground truth",
+    )
     ax3.set_title("result")
 
-    for ax in [ax1, ax2, ax3]:
+    for ax in (ax1, ax2, ax3):
         ax.grid(True, linestyle="--", linewidth=0.4, alpha=0.5)
         ax.set_aspect("equal", adjustable="datalim")
 
-    fig.tight_layout()
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    fig.savefig(output_path, dpi=180)
+    _save_legended_axes(fig, [ax1, ax2, ax3])
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    fig.savefig(output_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
 
 
 def main() -> None:
-    """Run TrajICL step visualization over validation queries."""
+    """Build val sample, run STES then PG-ES, save one three-panel figure."""
     args = parse_args()
     set_seed(args.seed)
 
@@ -344,69 +240,59 @@ def main() -> None:
     model = model.to(args.device)
     model.eval()
 
-    dataset_val = build_val_dataset(cfg)
+    dataset_val = create_dataset(split="val", cfg=cfg)
     total = len(dataset_val)
-    start = max(0, args.start_index)
-    end = min(total, start + args.num_samples)
-    print(f"Total val samples: {total}, visualizing [{start}, {end})")
+    if args.start_index < 0 or args.start_index >= total:
+        raise ValueError(
+            f"start_index {args.start_index} out of range (val len={total})"
+        )
+    sample_i = int(args.start_index)
+    fold, query_idx = dataset_val.valid_indices_fold_pairs[sample_i]
 
-    for sample_i in range(start, end):
-        fold, query_idx = dataset_val.valid_indices_fold_pairs[sample_i]
-        step1_examples = get_first_step_example_indices(
-            dataset=dataset_val,
-            fold=fold,
-            query_idx=query_idx,
-            num_example=args.num_example,
-            prompting_method=args.prompting_method,
-        )
-        trajs1, masks1, pad1 = build_input_from_indices(
-            dataset=dataset_val,
-            fold=fold,
-            query_idx=query_idx,
-            example_indices=step1_examples,
-        )
-        out1 = infer_one_step(cfg, model, trajs1, masks1, pad1)
-        pred1_all = out1["pred"][0]
-        hist_target = out1["hist_trajs"][0, -1, :, 0].detach().cpu()
+    num_ex = int(args.num_example)
+    step1_ids = select_step1_examples_stes(
+        dataset_val, fold, query_idx, num_ex, str(cfg.dataset.prompting)
+    )
+    trajs1, masks1, pad1 = build_single_query_input(
+        dataset_val, fold, query_idx, step1_ids
+    )
+    pred1, _ = run_single_inference(cfg, model, trajs1, masks1, pad1)
+    pred1 = pred1[0]  # [K, T, 2] on device
 
-        step2_examples = second_step_retrieval(
-            dataset=dataset_val,
-            fold=fold,
-            query_idx=query_idx,
-            pred_step1_all=pred1_all,
-            hist_target=hist_target,
-            num_example=args.num_example,
-            candidate_pool_size=args.candidate_pool_size,
-        )
-        trajs2, masks2, pad2 = build_input_from_indices(
-            dataset=dataset_val,
-            fold=fold,
-            query_idx=query_idx,
-            example_indices=step2_examples,
-        )
-        out2 = infer_one_step(cfg, model, trajs2, masks2, pad2)
-        pred2 = select_pred_mode(out2["pred"])
-        gt = out2["fut_trajs"][0, -1, :, 0].detach().cpu()
+    hist_trajs, _, _, _, _, _ = batch_process_coords(
+        trajs1, masks1, pad1, cfg, training=False, eval_robust=False
+    )
+    hist_target = hist_trajs[0, -1, :, 0]  # [hist_len, 2] on device
 
-        output_path = os.path.join(
-            args.output_dir,
-            f"val_{sample_i:05d}_fold_{fold}_query_{query_idx}.png",
-        )
-        visualize_sample(
-            dataset=dataset_val,
-            fold=fold,
-            query_idx=query_idx,
-            step1_example_indices=step1_examples,
-            step2_example_indices=step2_examples,
-            pred_step1_all=pred1_all,
-            pred_step2=pred2,
-            gt_fut=gt,
-            output_path=output_path,
-        )
-        print(
-            f"[{sample_i}] fold={fold} query={query_idx} "
-            f"step1={step1_examples} step2={step2_examples} -> {output_path}"
-        )
+    step2_ids = select_step2_examples_with_pges(
+        dataset_val,
+        fold,
+        query_idx,
+        pred1,
+        hist_target,
+        cfg,
+        num_ex,
+        int(args.pges_candidate_top_n),
+    )
+    trajs2, masks2, pad2 = build_single_query_input(
+        dataset_val, fold, query_idx, step2_ids
+    )
+    pred2, gt = run_single_inference(cfg, model, trajs2, masks2, pad2)
+
+    _visualize_one(
+        dataset_val,
+        fold,
+        query_idx,
+        step1_ids,
+        step2_ids,
+        pred2,
+        gt,
+        args.output,
+    )
+    print(
+        f"Saved: {args.output} | sample={sample_i} fold={fold} query={query_idx} | "
+        f"step1={step1_ids} | step2={step2_ids}"
+    )
 
 
 if __name__ == "__main__":

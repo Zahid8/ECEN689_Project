@@ -144,8 +144,10 @@ def evaluate(split, cfg, epoch, model, dataloader, stats, eval_robust=False):
     return stats
 
 
-def _get_prompt_from_dataset(dataset: Any, fold: int, example_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Fetch one prompt trajectory/mask from the fold-specific pool."""
+def get_pool_example(
+    dataset: Any, fold: int, example_idx: int
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Fetch one prompt trajectory and mask from the fold-specific pool."""
     if dataset.pool_dc_by_fold is not None:
         pool_bundle = dataset.pool_dc_by_fold[fold]
         return pool_bundle["trajs"][example_idx], pool_bundle["masks"][example_idx]
@@ -159,7 +161,10 @@ def _get_prompt_from_dataset(dataset: Any, fold: int, example_idx: int) -> Tuple
     return dataset.trajs[example_idx], dataset.masks[example_idx]
 
 
-def _build_single_query_input(
+_get_prompt_from_dataset = get_pool_example
+
+
+def build_single_query_input(
     dataset: Any,
     fold: int,
     query_idx: int,
@@ -169,7 +174,7 @@ def _build_single_query_input(
     trajs_list: List[torch.Tensor] = []
     masks_list: List[torch.Tensor] = []
     for example_idx in example_indices:
-        traj_example, mask_example = _get_prompt_from_dataset(dataset, fold, example_idx)
+        traj_example, mask_example = get_pool_example(dataset, fold, example_idx)
         trajs_list.append(traj_example)
         masks_list.append(mask_example)
 
@@ -179,7 +184,7 @@ def _build_single_query_input(
     return collate_batch([(trajs_list, masks_list)])
 
 
-def _run_single_inference(
+def run_single_inference(
     cfg: Any,
     model: torch.nn.Module,
     trajs: torch.Tensor,
@@ -207,19 +212,47 @@ def _run_single_inference(
     return primary_pred_fut_traj, primary_gt_fut_traj
 
 
-def _get_hist_aligned_primary_seq(traj: torch.Tensor, hist_len: int) -> torch.Tensor:
-    """Convert one primary sequence to local coordinates aligned at history end."""
-    seq = traj[0, :, 0, :2].float()
-    origin = seq[hist_len - 1 : hist_len]
-    return seq - origin
+# Backward compatibility for in-repo callers using private names
+_build_single_query_input = build_single_query_input
+_run_single_inference = run_single_inference
 
 
-def _select_step2_examples_with_pges(
+def pges_query_centric_primary_seq(
+    candidate_traj: torch.Tensor,
+    query_traj: torch.Tensor,
+    cfg: Any,
+) -> torch.Tensor:
+    """Primary trajectory in the query last-frame frame with training ``resize``.
+
+    This matches the first re-centering in :func:`dataset.batch_process_coords`
+    (subtract query primary at ``hist_len - 1`` after ``resize``) without the
+    per-prompt re-centering to each example's own primary. PG-ES must compare
+    :math:`[X, \\hat{Y}]` with :math:`[\\tilde{X}, \\tilde{Y}]` in this same frame.
+
+    Args:
+        candidate_traj: Raw trajectory of one pool example ``[N, T, J, C]`` or similar.
+        query_traj: Raw trajectory of the current query; primary is agent 0.
+        cfg: Config with ``model.hist_len``, ``model.fut_len``, ``training.resize``.
+
+    Returns:
+        Tensor of shape ``[L, 2]`` with ``L <= hist_len + fut_len``.
+    """
+    hist_len = int(cfg["model"]["hist_len"])
+    fut_len = int(cfg["model"]["fut_len"])
+    max_t = int(min(candidate_traj.shape[1], hist_len + fut_len))
+    primary = candidate_traj[0, :max_t, 0, :2].float()
+    query_last = query_traj[0, hist_len - 1, 0, :2].float()
+    resize = float(cfg.training.resize)
+    return resize * (primary - query_last)
+
+
+def select_step2_examples_with_pges(
     dataset: Any,
     fold: int,
     query_idx: int,
     pred_step1: torch.Tensor,
     hist_target: torch.Tensor,
+    cfg: Any,
     num_example: int,
     candidate_top_n: int,
 ) -> List[int]:
@@ -243,12 +276,16 @@ def _select_step2_examples_with_pges(
         dim=1,
     )  # [K, T, 2]
 
-    hist_len = int(dataset.hist_len)
+    query_traj = dataset.trajs[query_idx]
     candidate_seqs: List[torch.Tensor] = []
     valid_candidate_indices: List[int] = []
     for candidate_idx in candidate_indices:
-        candidate_traj, _ = _get_prompt_from_dataset(dataset, fold, candidate_idx)
-        candidate_seq = _get_hist_aligned_primary_seq(candidate_traj, hist_len=hist_len)
+        candidate_traj, _ = get_pool_example(dataset, fold, candidate_idx)
+        candidate_seq = pges_query_centric_primary_seq(
+            candidate_traj,
+            query_traj,
+            cfg,
+        )
         candidate_seqs.append(candidate_seq)
         valid_candidate_indices.append(candidate_idx)
 
@@ -267,6 +304,26 @@ def _select_step2_examples_with_pges(
     top_m = min(num_example, min_k_dist.shape[0])
     selected_positions = torch.topk(-min_k_dist, k=top_m).indices.tolist()
     return [valid_candidate_indices[pos] for pos in selected_positions]
+
+
+_select_step2_examples_with_pges = select_step2_examples_with_pges
+
+
+def select_step1_examples_stes(
+    dataset: Any,
+    fold: int,
+    query_idx: int,
+    num_example: int,
+    prompting: str,
+) -> List[int]:
+    """Select first-stage (STES) in-context example indices, matching ``evaluate_pges``."""
+    if num_example <= 0:
+        return []
+    if prompting == "random":
+        candidates = list(dataset.similarity_dicts[fold][query_idx])
+        k = min(num_example, len(candidates))
+        return random.sample(candidates, k) if k > 0 else []
+    return list(dataset.similarity_dicts[fold][query_idx])[:num_example][::-1]
 
 
 def evaluate_pges(
@@ -292,20 +349,21 @@ def evaluate_pges(
         for sample_i in tqdm(range(eval_steps)):
             fold, query_idx = dataset.valid_indices_fold_pairs[sample_i]
 
-            if cfg.dataset.prompting == "random":
-                candidates = list(dataset.similarity_dicts[fold][query_idx])
-                k = min(num_example, len(candidates))
-                step1_examples = random.sample(candidates, k) if k > 0 else []
-            else:
-                step1_examples = list(dataset.similarity_dicts[fold][query_idx])[:num_example][::-1]
+            step1_examples = select_step1_examples_stes(
+                dataset,
+                fold,
+                query_idx,
+                num_example,
+                str(cfg.dataset.prompting),
+            )
 
-            trajs1, masks1, pad1 = _build_single_query_input(
+            trajs1, masks1, pad1 = build_single_query_input(
                 dataset=dataset,
                 fold=fold,
                 query_idx=query_idx,
                 example_indices=step1_examples,
             )
-            pred_step1, _ = _run_single_inference(cfg, model, trajs1, masks1, pad1)
+            pred_step1, _ = run_single_inference(cfg, model, trajs1, masks1, pad1)
             pred_step1 = pred_step1[0]  # [K, fut_len, 2]
 
             hist_trajs, _, _, _, _, _ = batch_process_coords(
@@ -318,23 +376,24 @@ def evaluate_pges(
             )
             hist_target = hist_trajs[0, -1, :, 0]  # [hist_len, 2]
 
-            step2_examples = _select_step2_examples_with_pges(
+            step2_examples = select_step2_examples_with_pges(
                 dataset=dataset,
                 fold=fold,
                 query_idx=query_idx,
                 pred_step1=pred_step1,
                 hist_target=hist_target,
+                cfg=cfg,
                 num_example=num_example,
                 candidate_top_n=pges_candidate_top_n,
             )
 
-            trajs2, masks2, pad2 = _build_single_query_input(
+            trajs2, masks2, pad2 = build_single_query_input(
                 dataset=dataset,
                 fold=fold,
                 query_idx=query_idx,
                 example_indices=step2_examples,
             )
-            pred_step2, gt_target = _run_single_inference(cfg, model, trajs2, masks2, pad2)
+            pred_step2, gt_target = run_single_inference(cfg, model, trajs2, masks2, pad2)
             loss_ade, _ = mse_primary_min_ade_loss(pred_step2, gt_target)
             loss_fde, _ = mse_primary_min_fde_loss(pred_step2, gt_target)
 
