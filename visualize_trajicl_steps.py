@@ -78,6 +78,12 @@ def parse_args() -> argparse.Namespace:
         default="results/trajicl_steps/trajicl_step_viz.png",
         help="Path to save the single output figure.",
     )
+    parser.add_argument(
+        "--num_step1_viz",
+        type=int,
+        default=5,
+        help="Number of first-stage prediction modes to draw on the middle panel (out of K).",
+    )
     return parser.parse_args()
 
 
@@ -103,7 +109,12 @@ def _plot_past_and_neighbors(
     surrounding_past: torch.Tensor,
     use_legend: bool,
 ) -> None:
-    """Plot target (blue) and surrounding agents (black) with at most one label each."""
+    """Plot target (blue) and surrounding agents (black) with at most one label each.
+
+    Coordinates are unscaled, target-centric (``model / resize``), matching
+    :func:`batch_process_coords` for the **query** channel.
+    """
+    target_past = target_past.cpu()
     ax.plot(
         target_past[:, 0],
         target_past[:, 1],
@@ -113,6 +124,7 @@ def _plot_past_and_neighbors(
     )
     for k in range(surrounding_past.shape[0]):
         ag = surrounding_past[k]
+        ag = ag.cpu() if torch.is_tensor(ag) else ag
         ax.plot(
             ag[:, 0],
             ag[:, 1],
@@ -120,6 +132,51 @@ def _plot_past_and_neighbors(
             linewidth=1.0,
             alpha=0.8,
             label="surrounding" if (use_legend and k == 0) else None,
+        )
+
+
+def _plot_step1_predictions_subset(
+    ax: Any,
+    pred1: torch.Tensor,
+    hist_target: torch.Tensor,
+    resize: float,
+    num_curves: int,
+    use_legend: bool,
+) -> None:
+    """Draw a subset of first-stage (STES) future modes in green (unscaled, query frame)."""
+    pred1 = pred1.detach().float().cpu()
+    hist_target = hist_target.detach().float().cpu()
+    k_all = int(pred1.shape[0])
+    if k_all == 0 or num_curves <= 0:
+        return
+    n_pick = min(num_curves, k_all)
+    if n_pick == k_all:
+        mode_indices = list(range(k_all))
+    else:
+        raw_idx = [int(x) for x in torch.linspace(0, k_all - 1, n_pick).round().long().tolist()]
+        mode_indices = []
+        for ri in raw_idx:
+            if ri not in mode_indices:
+                mode_indices.append(ri)
+    past_end = hist_target[-1] / float(resize)
+    label_used = False
+    for mi in mode_indices:
+        pred_u = (pred1[mi] / float(resize)).numpy()
+        ax.plot(
+            [past_end[0].item(), pred_u[0, 0]],
+            [past_end[1].item(), pred_u[0, 1]],
+            color="green",
+            linewidth=1.0,
+            alpha=0.6,
+            label="stage-1 pred" if (use_legend and not label_used) else None,
+        )
+        label_used = True
+        ax.plot(
+            pred_u[:, 0],
+            pred_u[:, 1],
+            color="green",
+            linewidth=1.2,
+            alpha=0.6,
         )
 
 
@@ -131,8 +188,20 @@ def _plot_example_histories(
     query_origin: torch.Tensor,
     hist_len: int,
     use_legend: bool,
+    legend_label: str = "example",
 ) -> None:
-    """Plot example primary past trajectories in gray (label once)."""
+    """Plot example primary past trajectories in gray (label once).
+
+    Args:
+        ax: Matplotlib axes.
+        dataset: Validation dataset with pool access.
+        fold: Cross-validation fold index.
+        example_indices: Pool indices to draw (STES or PG-ES stage).
+        query_origin: Query primary position at last history step (unscaled).
+        hist_len: History length in time steps.
+        use_legend: Whether to attach a legend entry to the first curve.
+        legend_label: Legend text for the first example curve.
+    """
     for j, example_idx in enumerate(example_indices):
         traj_example, _ = get_pool_example(dataset, fold, example_idx)
         seq = traj_example[0, :, 0, :2].float() - query_origin
@@ -142,8 +211,8 @@ def _plot_example_histories(
             seq_hist[:, 1],
             color="gray",
             linewidth=1.0,
-            alpha=0.9,
-            label="example" if (use_legend and j == 0) else None,
+            alpha=0.5,
+            label=legend_label if (use_legend and j == 0) else None,
         )
 
 
@@ -165,33 +234,73 @@ def _visualize_one(
     query_idx: int,
     step1_ids: List[int],
     step2_ids: List[int],
+    pred1: torch.Tensor,
     pred2_multimodal: torch.Tensor,
     gt_fut: torch.Tensor,
+    hist_target: torch.Tensor,
+    surrounding_hist: torch.Tensor,
+    resize: float,
+    num_step1_viz: int,
     output_path: str,
 ) -> None:
-    """Render three subplots: step1, step2 (layout only), result (minADE mode vs GT)."""
+    """Render three subplots: STES, STES+PG-ES context with stage-1 preds, final minADE pred vs GT.
+
+    ``hist_target`` / ``surrounding_hist`` are from ``batch_process_coords`` (query
+    channel); plots use unscaled coordinates (``/ resize``) so they match
+    ``pred1`` / ``pred2`` after division by ``resize``.
+    """
     hist_len = int(dataset.hist_len)
     query_traj = dataset.trajs[query_idx]
-    target_past, surrounding_past, query_origin = _extract_scene_past(
-        query_traj, hist_len=hist_len
-    )
+    _, _, query_origin = _extract_scene_past(query_traj, hist_len=hist_len)
+    target_past = hist_target / float(resize)
+    if surrounding_hist.numel() > 0:
+        surrounding_past = (surrounding_hist / float(resize)).permute(1, 0, 2)
+    else:
+        surrounding_past = torch.empty(0, hist_len, 2, dtype=target_past.dtype)
 
     with torch.no_grad():
         _, min_idx = mse_primary_min_ade_loss(pred2_multimodal, gt_fut)
     mode_i = int(min_idx[0].item())
-    pred_best = pred2_multimodal[0, mode_i].detach().cpu()
-    gt_cpu = gt_fut[0].detach().cpu()
+    pred_best = (pred2_multimodal[0, mode_i] / float(resize)).detach().cpu()
+    gt_cpu = (gt_fut[0] / float(resize)).detach().cpu()
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), squeeze=False)
     ax1, ax2, ax3 = axes[0]
 
     _plot_past_and_neighbors(ax1, target_past, surrounding_past, use_legend=True)
-    _plot_example_histories(ax1, dataset, fold, step1_ids, query_origin, hist_len, use_legend=True)
-    ax1.set_title("step 1")
+    _plot_example_histories(
+        ax1,
+        dataset,
+        fold,
+        step1_ids,
+        query_origin,
+        hist_len,
+        use_legend=True,
+        legend_label="STES example",
+    )
+    ax1.set_title("step 1 (STES)")
 
     _plot_past_and_neighbors(ax2, target_past, surrounding_past, use_legend=True)
-    _plot_example_histories(ax2, dataset, fold, step2_ids, query_origin, hist_len, use_legend=True)
-    ax2.set_title("step 2")
+    _plot_step1_predictions_subset(
+        ax2,
+        pred1,
+        hist_target,
+        resize,
+        num_step1_viz,
+        use_legend=True,
+    )
+    # Gray trajectories: indices from select_step2_examples_with_pges (PG-ES), not step1.
+    _plot_example_histories(
+        ax2,
+        dataset,
+        fold,
+        step2_ids,
+        query_origin,
+        hist_len,
+        use_legend=True,
+        legend_label="PG-ES example",
+    )
+    ax2.set_title("step 2 (STES + PG-ES)")
 
     _plot_past_and_neighbors(ax3, target_past, surrounding_past, use_legend=True)
     ax3.plot(
@@ -208,7 +317,7 @@ def _visualize_one(
         linewidth=2.2,
         label="ground truth",
     )
-    ax3.set_title("result")
+    ax3.set_title("result (stage-2, minADE mode)")
 
     for ax in (ax1, ax2, ax3):
         ax.grid(True, linestyle="--", linewidth=0.4, alpha=0.5)
@@ -262,7 +371,12 @@ def main() -> None:
     hist_trajs, _, _, _, _, _ = batch_process_coords(
         trajs1, masks1, pad1, cfg, training=False, eval_robust=False
     )
-    hist_target = hist_trajs[0, -1, :, 0]  # [hist_len, 2] on device
+    hist_target = hist_trajs[0, -1, :, 0]  # [hist_len, 2] on device, query channel
+    n_agent = int(hist_trajs.shape[3])
+    if n_agent > 1:
+        surrounding_hist = hist_trajs[0, -1, :, 1:, :]
+    else:
+        surrounding_hist = hist_trajs.new_empty(0)
 
     step2_ids = select_step2_examples_with_pges(
         dataset_val,
@@ -285,13 +399,18 @@ def main() -> None:
         query_idx,
         step1_ids,
         step2_ids,
+        pred1,
         pred2,
         gt,
+        hist_target,
+        surrounding_hist,
+        float(cfg.training.resize),
+        int(args.num_step1_viz),
         args.output,
     )
     print(
         f"Saved: {args.output} | sample={sample_i} fold={fold} query={query_idx} | "
-        f"step1={step1_ids} | step2={step2_ids}"
+        f"STES step1={step1_ids} | PG-ES step2={step2_ids}"
     )
 
 
