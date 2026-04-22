@@ -1,6 +1,6 @@
 training:
   project: TrajICL
-  batch_size: 64
+  batch_size: 32
   epochs: 400
   optimizer: adamw
   lr: 0.0001
@@ -55,9 +55,9 @@ model:
   output_scale: 1
 
 load_model:
-  resume: False
+  resume: True
   model_dir: TrajICL
-  model_path: Stage2/best_val_checkpoint.pth.tar
+  model_path: retrain/last_epoch_checkpoint.pth.tar
 
 output_dir: results
 device: cuda

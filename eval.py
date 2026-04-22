@@ -5,7 +5,7 @@ from typing import Any, Dict
 import torch
 from omegaconf import OmegaConf
 
-from helper import create_dataloader, evaluate
+from helper import create_dataloader, evaluate, evaluate_pges
 from model import create_model
 
 # Ignore minor warnings to keep the output clean
@@ -38,6 +38,17 @@ def parse_args():
         default="sim",
         help="Prompting method setting for the dataset configuration.",
     ) # random / sim
+    parser.add_argument(
+        "--use_pges",
+        action="store_true",
+        help="Enable prediction-guided two-stage example selection during evaluation.",
+    )
+    parser.add_argument(
+        "--pges_candidate_top_n",
+        type=int,
+        default=128,
+        help="Use STES top-N candidates before PG-ES refinement.",
+    )
     return parser.parse_args()
 
 def main():
@@ -104,14 +115,25 @@ def main():
 
         stats: Dict[str, Any] = {}
         # Run the evaluation
-        stats = evaluate(
-            "test",
-            cfg,
-            0,
-            model,
-            dataloader_test,
-            stats,
-        )
+        if args.use_pges:
+            stats = evaluate_pges(
+                "test",
+                cfg,
+                0,
+                model,
+                dataloader_test,
+                stats,
+                pges_candidate_top_n=args.pges_candidate_top_n,
+            )
+        else:
+            stats = evaluate(
+                "test",
+                cfg,
+                0,
+                model,
+                dataloader_test,
+                stats,
+            )
 
         # --- Scale Results by the Resize Factor ---
         # Divide the results by the resize factor (existing processing logic)
