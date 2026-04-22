@@ -192,32 +192,50 @@ def second_step_retrieval(
     dataset: Any,
     fold: int,
     query_idx: int,
-    pseudo_seq: torch.Tensor,
+    pred_step1_all: torch.Tensor,
+    hist_target: torch.Tensor,
     num_example: int,
     candidate_pool_size: int,
 ) -> List[int]:
-    """Retrieve step-2 prompts using first prediction as pseudo future."""
+    """Retrieve step-2 prompts via PG-ES min-k distance."""
     if num_example <= 0:
         return []
 
-    if dataset.similarity_dicts_seq is not None and query_idx in dataset.similarity_dicts_seq[fold]:
-        candidate_indices = list(dataset.similarity_dicts_seq[fold][query_idx])[:candidate_pool_size]
-    else:
-        candidate_indices = list(dataset.similarity_dicts[fold][query_idx])[:candidate_pool_size]
+    candidate_indices = list(dataset.similarity_dicts[fold][query_idx])[:candidate_pool_size]
+    if len(candidate_indices) == 0:
+        return []
 
-    scored: List[Tuple[float, int]] = []
+    pred_step1_all = pred_step1_all.detach()
+    hist_target = hist_target.detach().to(pred_step1_all.device)
+    query_seq_by_k = torch.cat(
+        [hist_target.unsqueeze(0).repeat(pred_step1_all.shape[0], 1, 1), pred_step1_all],
+        dim=1,
+    )  # [K, T, 2]
+
     hist_len = int(dataset.hist_len)
+    candidate_seq_list: List[torch.Tensor] = []
+    valid_candidate_indices: List[int] = []
     for candidate_idx in candidate_indices:
         candidate_traj, _ = get_prompt_from_dataset(dataset, fold, candidate_idx)
         candidate_seq = get_primary_seq_local(candidate_traj, hist_len=hist_len)
-        steps = min(pseudo_seq.shape[0], candidate_seq.shape[0])
-        if steps <= 0:
-            continue
-        dist = torch.norm(pseudo_seq[:steps] - candidate_seq[:steps], dim=-1).mean().item()
-        scored.append((dist, candidate_idx))
+        candidate_seq_list.append(candidate_seq)
+        valid_candidate_indices.append(candidate_idx)
 
-    scored.sort(key=lambda x: x[0])
-    return [idx for _, idx in scored[:num_example]]
+    if len(candidate_seq_list) == 0:
+        return []
+
+    candidate_tensor = torch.stack(candidate_seq_list, dim=0).to(pred_step1_all.device)  # [M, T, 2]
+    steps = min(candidate_tensor.shape[1], query_seq_by_k.shape[1])
+    candidate_tensor = candidate_tensor[:, :steps]
+    query_seq_by_k = query_seq_by_k[:, :steps]
+
+    diff = candidate_tensor.unsqueeze(1) - query_seq_by_k.unsqueeze(0)  # [M, K, T, 2]
+    dist = torch.norm(diff, p=2, dim=-1).mean(dim=-1)  # [M, K]
+    min_k_dist = torch.min(dist, dim=1).values  # [M]
+
+    top_m = min(num_example, len(valid_candidate_indices))
+    selected_positions = torch.topk(-min_k_dist, k=top_m).indices.tolist()
+    return [valid_candidate_indices[pos] for pos in selected_positions]
 
 
 def extract_scene_for_plot(query_traj: torch.Tensor, hist_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -252,7 +270,7 @@ def visualize_sample(
     query_idx: int,
     step1_example_indices: Sequence[int],
     step2_example_indices: Sequence[int],
-    pred_step1: torch.Tensor,
+    pred_step1_all: torch.Tensor,
     pred_step2: torch.Tensor,
     gt_fut: torch.Tensor,
     output_path: str,
@@ -280,11 +298,13 @@ def visualize_sample(
     for agent_idx in range(surrounding_past.shape[0]):
         agent = surrounding_past[agent_idx]
         ax2.plot(agent[:, 0], agent[:, 1], color="black", linewidth=1.0, alpha=0.8)
-    pred1 = pred_step1.detach().cpu()
-    link_x = [target_past[-1, 0].item(), pred1[0, 0].item()]
-    link_y = [target_past[-1, 1].item(), pred1[0, 1].item()]
-    ax2.plot(link_x, link_y, color="green", linewidth=2.0)
-    ax2.plot(pred1[:, 0], pred1[:, 1], color="green", linewidth=2.0)
+    pred1_all = pred_step1_all.detach().cpu()
+    for mode_idx in range(pred1_all.shape[0]):
+        pred1 = pred1_all[mode_idx]
+        link_x = [target_past[-1, 0].item(), pred1[0, 0].item()]
+        link_y = [target_past[-1, 1].item(), pred1[0, 1].item()]
+        ax2.plot(link_x, link_y, color="green", linewidth=1.0, alpha=0.55)
+        ax2.plot(pred1[:, 0], pred1[:, 1], color="green", linewidth=1.2, alpha=0.55)
     plot_example_primary(ax2, dataset, fold, step2_example_indices, query_origin, hist_len)
     ax2.set_title("step 2")
 
@@ -346,15 +366,15 @@ def main() -> None:
             example_indices=step1_examples,
         )
         out1 = infer_one_step(cfg, model, trajs1, masks1, pad1)
-        pred1 = select_pred_mode(out1["pred"])
+        pred1_all = out1["pred"][0]
         hist_target = out1["hist_trajs"][0, -1, :, 0].detach().cpu()
-        pseudo_seq = torch.cat([hist_target, pred1], dim=0)
 
         step2_examples = second_step_retrieval(
             dataset=dataset_val,
             fold=fold,
             query_idx=query_idx,
-            pseudo_seq=pseudo_seq,
+            pred_step1_all=pred1_all,
+            hist_target=hist_target,
             num_example=args.num_example,
             candidate_pool_size=args.candidate_pool_size,
         )
@@ -378,7 +398,7 @@ def main() -> None:
             query_idx=query_idx,
             step1_example_indices=step1_examples,
             step2_example_indices=step2_examples,
-            pred_step1=pred1,
+            pred_step1_all=pred1_all,
             pred_step2=pred2,
             gt_fut=gt,
             output_path=output_path,

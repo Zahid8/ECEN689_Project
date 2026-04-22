@@ -20,13 +20,6 @@ Our TrajICL implementation includes the following key features:
 - **Prediction-Guided Example Selection (PG-ES):** Refines example selection by utilizing both past and predicted future trajectories to account for long-term dynamics.
 - **Superior Adaptation & Generalization:** Leverages large-scale synthetic training to achieve remarkable adaptation, outperforming even fine-tuned approaches across in-domain and cross-domain benchmarks.
 
-## 📂 Data Preparation
-
-### Download MOTSynth dataset
-
-```bash
-bash bash scripts/donwnload.sh
-```
 
 ### Run Preprocessing Code
 
@@ -59,27 +52,18 @@ python train.py -m training.epochs=400 training.warmup_steps=12 dataset.num_exam
 ## 🔍 Evaluation
 
 ```bash
-python eval.py
+python3 eval.py --model_path <ckpt> --dataset_name <> --prompting_method sim
 ```
 
-## ✅ TODO
+with pges:
+```bash
+python3 eval.py \
+  --model_path <ckpt> \
+  --dataset_name motsynth \
+  --prompting_method sim \
+  --use_pges \
+  --pges_candidate_top_n 128
+```
 
-- [ ] Add prediction-guided example selection code
-- [ ] Add other datasets
 
-## 👏 Acknowledgement
-
-We sincerely thank the authors of Social-Transmotion for providing their [source code](https://github.com/vita-epfl/social-transmotion), which has been invaluable to our work. We are immensely grateful for their contribution.
-
-## ✍️ Citation
-
-If you use this code for your research, please cite our paper.
-
-```bib
-@article{Fujii2025TrajICL,
-  title = {Towards Predicting Any Human Trajectory In Context},
-  author= {Fujii, Ryo and Hachiuma, Ryo and Saito, Hideo},
-  journal={Advances in Neural Information Processing Systems (NeurIPS)},
-  year={2025}
-}
 ```
