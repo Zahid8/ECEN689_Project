@@ -1,4 +1,5 @@
 import random
+import os
 import pickle
 
 import numpy as np
@@ -46,6 +47,7 @@ class Dataset(torch.utils.data.Dataset):
             self.valid_indices_by_fold,
             self.similarity_dicts,
             self.similarity_dicts_seq,
+            self.cluster_sizes,
         ) = load_processed_data(
             split,
             name,
@@ -53,7 +55,11 @@ class Dataset(torch.utils.data.Dataset):
             centroid_suffix=centroid_suffix,
             processed_root=processed_root,
             load_similarity_seq=load_similarity_seq,
+            load_cluster_sizes=(example_pool_type == "centroid"),
         )
+        
+        if self.cluster_sizes is None:
+            self.cluster_sizes = {}
 
         if split == "train":
             self.valid_indices_fold_pairs = []
@@ -81,8 +87,8 @@ class Dataset(torch.utils.data.Dataset):
                 f"{name}{centroid_suffix}",  # e.g. motsynth_centroid
                 f"{split}_cluster_sizes.pickle",
             )
-        with open(cluster_sizes_path, "rb") as f:
-            self.cluster_sizes = pickle.load(f)
+            with open(cluster_sizes_path, "rb") as f:
+                self.cluster_sizes = pickle.load(f)
 
     def __len__(self):
         return len(self.valid_indices_fold_pairs)
@@ -328,13 +334,18 @@ def sim_prompting(idx, num_example, similarity_dict):
     return example_idxs[::-1]
     
 def weighted_sim_prompting(idx, num_example, similarity_dict, cluster_sizes, alpha=0.5):
+    
+    candidates = similarity_dict[idx]
+    if not candidates:
+        return []
+    
     scored = []
     for rank, candidate_idx in enumerate(candidates):
         similarity_score = rank / len(candidates)
         n = cluster_sizes.get(candidate_idx, 1)
         
         weight = np.log1p(n)
-        weighted_score = similarity_score * (1 + alpha * weight)
+        weighted_score = 1#similarity_score * (1 + alpha * weight)
         
         scored.append((weighted_score, candidate_idx))
         

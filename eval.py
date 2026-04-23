@@ -84,6 +84,7 @@ def main():
         checkpoint = torch.load(
             model_path,
             map_location=device,
+            weights_only=False,
         )
     # The configuration is stored under the 'cfg' key
         cfg = checkpoint["cfg"]
@@ -149,9 +150,7 @@ def main():
 
     # --- 📈 Final Results Formatting and Output ---
         print("\n" + "="*50)
-        print(f"✅ Final Results: **{run_name}** on **{cfg.dataset.name}**")
-        print("="*50)
-
+        print(f"✅ Final Results: **{run_name}** on **{cfg.dataset.name}** | pool: {args.example_pool_type} | prompting: {args.prompting_method}")
         print("### 📊 minADE&minFDE vs Shot Summary")
 
     # Table format output: Shot (x-axis) vs. ADE/FDE (y-axis)
