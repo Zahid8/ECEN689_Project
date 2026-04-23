@@ -256,7 +256,18 @@ def select_step2_examples_with_pges(
     num_example: int,
     candidate_top_n: int,
 ) -> List[int]:
-    """Select PG-ES examples via min_k distance using torch vectorized ops."""
+    """Select PG-ES examples via fused position + velocity cost (min over K).
+
+    Position and velocity errors follow :func:`preprocess.compute_sim_matrix`
+    (mean L2 over time; velocity as consecutive frame differences). Per-candidate
+    costs are min-max normalized across the candidate pool, then combined as
+    ``dist_weight * dist_norm + vel_weight * vel_norm`` like
+    :func:`preprocess.process_file_optimized`.
+
+    Returns:
+        Example indices **worst-to-best** among the chosen set (same order as
+        :func:`dataset.sim_prompting` / STES).
+    """
     if num_example <= 0:
         return []
 
@@ -271,6 +282,9 @@ def select_step2_examples_with_pges(
         return []
 
     device = pred_step1.device
+    dist_weight = float(getattr(cfg.dataset, "dist_weight", 1.0))
+    vel_weight = float(getattr(cfg.dataset, "vel_weight", 1.0))
+
     query_seq_by_k = torch.cat(
         [hist_target.unsqueeze(0).repeat(pred_step1.shape[0], 1, 1), pred_step1],
         dim=1,
@@ -301,9 +315,39 @@ def select_step2_examples_with_pges(
     dist = torch.norm(diff, p=2, dim=-1).mean(dim=-1)  # [M, K]
     min_k_dist = torch.min(dist, dim=1).values  # [M]
 
-    top_m = min(num_example, min_k_dist.shape[0])
-    selected_positions = torch.topk(-min_k_dist, k=top_m).indices.tolist()
-    return [valid_candidate_indices[pos] for pos in selected_positions]
+    eps = 1e-8
+    if steps >= 2 and vel_weight != 0.0:
+        cand_vel = torch.diff(candidate_tensor, dim=1)  # [M, T-1, 2]
+        query_vel = torch.diff(query_seq_by_k, dim=1)  # [K, T-1, 2]
+        diff_vel = cand_vel.unsqueeze(1) - query_vel.unsqueeze(0)
+        vel_err = torch.norm(diff_vel, p=2, dim=-1).mean(dim=-1)
+        min_k_vel = torch.min(vel_err, dim=1).values
+    else:
+        min_k_vel = torch.zeros_like(min_k_dist)
+
+    def _minmax_norm(x: torch.Tensor) -> torch.Tensor:
+        x_min = torch.min(x)
+        x_max = torch.max(x)
+        return (x - x_min) / (x_max - x_min + eps)
+
+    if dist_weight != 0.0:
+        dist_norm = _minmax_norm(min_k_dist)
+    else:
+        dist_norm = torch.zeros_like(min_k_dist)
+
+    if vel_weight != 0.0:
+        vel_norm = _minmax_norm(min_k_vel)
+    else:
+        vel_norm = torch.zeros_like(min_k_vel)
+
+    combined = dist_weight * dist_norm + vel_weight * vel_norm
+
+    top_m = min(num_example, combined.shape[0])
+    selected_positions = torch.topk(-combined, k=top_m).indices.tolist()
+    # Match ``sim_prompting`` / STES: feed examples worst-to-best (reverse of
+    # similarity ranking among the chosen set).
+    best_to_worst = [valid_candidate_indices[pos] for pos in selected_positions]
+    return best_to_worst[::-1]
 
 
 _select_step2_examples_with_pges = select_step2_examples_with_pges

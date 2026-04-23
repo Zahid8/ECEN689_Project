@@ -34,6 +34,7 @@ class Model(nn.Module):
 
         self.hist_len = cfg["model"]["hist_len"]
         self.fut_len = cfg["model"]["fut_len"]
+        self.use_srpe = bool(cfg["model"].get("use_srpe", False))
 
         self.fc_in_traj = nn.Linear(2, self.dim_hidden)
 
@@ -125,6 +126,9 @@ class Model(nn.Module):
             example_primary_rel_pos
         )  # [B, C, 2] -> [B, C, D]
         traj_feat = traj_feat + rel_pos
+
+        if self.use_srpe:
+            traj_feat = self.dec_emb(traj_feat)
 
         primary_pred_fut_traj = self.decoder(
             traj_feat, training

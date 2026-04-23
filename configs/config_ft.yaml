@@ -1,14 +1,14 @@
 training:
   project: TrajICL
   batch_size: 32
-  epochs: 400
+  epochs: 100
   optimizer: adamw
   lr: 0.0001
   weight_decay: 0
   lr_decay: 1
   lr_drop: true
   scheduler: cosine
-  warmup_steps: 12
+  warmup_steps: 5
   max_grad_norm: 1.0
   num_workers: 8
   pin_mem: True
@@ -53,9 +53,10 @@ model:
   dim_hidden: 128
   dim_feedforward: 1024
   output_scale: 1
+  use_srpe: True
 
 load_model:
-  resume: True
+  resume: False
   model_dir: TrajICL
   model_path: retrain/last_epoch_checkpoint.pth.tar
 

@@ -103,6 +103,27 @@ def _extract_scene_past(
     return target_past, surrounding_past, origin.squeeze(0)
 
 
+def _plot_past_with_markers(
+    ax: Any,
+    xy: torch.Tensor,
+    color: str,
+    linewidth: float,
+    alpha: float = 1.0,
+    label: str = None,
+) -> None:
+    """Plot trajectory with start `O` and per-timestep `.` markers."""
+    pts = xy.detach().float().cpu()
+    if pts.shape[0] == 0:
+        return
+
+    x = pts[:, 0].numpy()
+    y = pts[:, 1].numpy()
+
+    ax.plot(x, y, color=color, linewidth=linewidth, alpha=alpha, label=label)
+    ax.scatter(x, y, color=color, s=10, marker=".", alpha=alpha)
+    ax.scatter(x[0], y[0], color=color, s=28, marker="o", alpha=alpha, zorder=3)
+
+
 def _plot_past_and_neighbors(
     ax: Any,
     target_past: torch.Tensor,
@@ -116,11 +137,12 @@ def _plot_past_and_neighbors(
     :func:`batch_process_coords` for the **query** channel.
     """
     target_past = target_past.cpu()
-    ax.plot(
-        target_past[:, 0],
-        target_past[:, 1],
+    _plot_past_with_markers(
+        ax=ax,
+        xy=target_past,
         color="blue",
         linewidth=2.0,
+        alpha=1.0,
         label="target past" if use_legend else None,
     )
 
@@ -128,9 +150,9 @@ def _plot_past_and_neighbors(
         for k in range(surrounding_past.shape[0]):
             ag = surrounding_past[k]
             ag = ag.cpu() if torch.is_tensor(ag) else ag
-            ax.plot(
-                ag[:, 0],
-                ag[:, 1],
+            _plot_past_with_markers(
+                ax=ax,
+                xy=ag,
                 color="black",
                 linewidth=1.0,
                 alpha=0.8,
@@ -212,9 +234,9 @@ def _plot_example_histories(
         end_t = hist_len + fut_len if fut_len > 0 else hist_len
         end_t = min(end_t, int(seq.shape[0]))
         seq_plot = seq[:end_t].cpu()
-        ax.plot(
-            seq_plot[:, 0],
-            seq_plot[:, 1],
+        _plot_past_with_markers(
+            ax=ax,
+            xy=seq_plot,
             color="gray",
             linewidth=1.0,
             alpha=0.5,
