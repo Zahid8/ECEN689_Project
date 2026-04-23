@@ -35,18 +35,17 @@ def parse_args():
     )
     parser.add_argument(
         "--prompting_method",
-        choices=["sim", "weighted_stes"],
         type=str,
-        # default="sim",
-        default="weighted_stes",
-        help="Prompting method setting for the dataset configuration: sim or weighted_stes.",
+        choices=["random", "sim", "weighted_sim"],
+        default="sim",
+        help="Prompting method setting for the dataset configuration.",
     ) # random / sim
     parser.add_argument(
         "--example_pool_type",
         type=str,
         choices=["raw", "centroid"],
-        default="centroid",
-        help="Which processed pool to use: raw or centroid (use 'centroid' with weighted_stes).",
+        default="raw",
+        help="Which processed pool to use: raw or centroid.",
     )
     parser.add_argument("--log_dir", type=str, default="outputs/logs")
     parser.add_argument("--disable_file_logging", action="store_true")
@@ -94,14 +93,9 @@ def main():
         OmegaConf.set_struct(cfg, False)
 
     # --- 🔄 Update Configuration with Arguments ---
+        cfg.dataset.prompting = args.prompting_method
         cfg.dataset.name = dataset_name # Update dataset name for dataloader creation
         cfg.dataset.example_pool_type = args.example_pool_type
-
-        cfg.dataset.prompting = args.prompting_method
-        cfg.dataset.load_cluster_sizes = (args.prompting_method == "weighted_stes")
-
-        if args.prompting_method == "weighted_stes" and args.example_pool_type == "raw":
-            print("WARNING: --prompting_method=weighted_stes and --example_pool_type=raw both specified")
 
 
     # --- 🏗️ Model Initialization and Loading ---
@@ -155,8 +149,9 @@ def main():
 
     # --- 📈 Final Results Formatting and Output ---
         print("\n" + "="*50)
-        print(f"✅ Final Results: **{run_name}** on **{cfg.dataset.name}** using **{args.prompting_method}**")
+        print(f"✅ Final Results: **{run_name}** on **{cfg.dataset.name}**")
         print("="*50)
+
         print("### 📊 minADE&minFDE vs Shot Summary")
 
     # Table format output: Shot (x-axis) vs. ADE/FDE (y-axis)

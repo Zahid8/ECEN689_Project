@@ -1,4 +1,5 @@
 import random
+import pickle
 
 import numpy as np
 import torch
@@ -22,8 +23,6 @@ class Dataset(torch.utils.data.Dataset):
         centroid_suffix="_centroid",
         processed_root="outputs/processed_data",
         load_similarity_seq=False,
-        load_cluster_sizes=False,
-        cfg=None,
     ):
 
         self.name = name
@@ -47,7 +46,6 @@ class Dataset(torch.utils.data.Dataset):
             self.valid_indices_by_fold,
             self.similarity_dicts,
             self.similarity_dicts_seq,
-            self.cluster_sizes,
         ) = load_processed_data(
             split,
             name,
@@ -55,13 +53,7 @@ class Dataset(torch.utils.data.Dataset):
             centroid_suffix=centroid_suffix,
             processed_root=processed_root,
             load_similarity_seq=load_similarity_seq,
-            load_cluster_sizes=load_cluster_sizes,
         )
-
-        self.selector = None
-        if cfg is not None:
-            from helper import build_example_selector
-            self.selector = build_example_selector(cfg, self.cluster_sizes)
 
         if split == "train":
             self.valid_indices_fold_pairs = []
@@ -81,6 +73,16 @@ class Dataset(torch.utils.data.Dataset):
                 self.pool_indices_by_fold,
                 self.similarity_dicts,
             )
+            
+        self.cluster_sizes = {}
+        if self.example_pool_type == "centroid":
+            cluster_sizes_path = os.path.join(
+                processed_root,
+                f"{name}{centroid_suffix}",  # e.g. motsynth_centroid
+                f"{split}_cluster_sizes.pickle",
+            )
+        with open(cluster_sizes_path, "rb") as f:
+            self.cluster_sizes = pickle.load(f)
 
     def __len__(self):
         return len(self.valid_indices_fold_pairs)
@@ -90,21 +92,20 @@ class Dataset(torch.utils.data.Dataset):
         traj = self.trajs[valid_idx]  # torch.Size([N, 21, 1, 3])
         mask = self.masks[valid_idx]  # torch.Size([N, 21, 1])
 
-        candidates = self.similarity_dicts[fold][valid_idx] 
-    
-        if self.selector is not None:
-            example_idxs = self.selector(valid_idx, candidates)
-        elif self.prompting == "random":
+        example_idxs = []
+        if self.prompting == "random":
             example_idxs = random_prompting(
                 valid_idx, self.num_example, self.similarity_dicts[fold]
             )
         elif self.prompting == "sim":
             example_idxs = sim_prompting(
                     valid_idx, self.num_example, self.similarity_dicts[fold]
-            )
-        else:
-            example_idxs = []
-
+                )
+        elif self.prompting == "weighted_sim":
+            example_idxs = weighted_sim_prompting(
+                    valid_idx, self.num_example, self.similarity_dicts[fold], self.cluster_sizes,
+                )
+               
         trajs_list = []
         masks_list = []
         for example_idx in example_idxs:
@@ -123,7 +124,6 @@ def create_dataset(split, cfg):
     centroid_suffix = cfg.dataset.get("centroid_suffix", "_centroid")
     processed_root = cfg.dataset.get("processed_root", "outputs/processed_data")
     load_similarity_seq = cfg.dataset.get("load_similarity_seq", False)
-    load_cluster_sizes = cfg.dataset.get("load_cluster_sizes", False)
 
     dataset = Dataset(
         name=cfg.dataset.name,
@@ -137,8 +137,6 @@ def create_dataset(split, cfg):
         centroid_suffix=centroid_suffix,
         processed_root=processed_root,
         load_similarity_seq=load_similarity_seq,
-        load_cluster_sizes=load_cluster_sizes,
-        cfg=cfg,
     )
 
     return dataset
@@ -328,6 +326,21 @@ def sim_prompting(idx, num_example, similarity_dict):
     valid_num_num_example = min(num_example, len(similarity_dict[idx]))
     example_idxs = similarity_dict[idx][:valid_num_num_example]
     return example_idxs[::-1]
+    
+def weighted_sim_prompting(idx, num_example, similarity_dict, cluster_sizes, alpha=0.5):
+    scored = []
+    for rank, candidate_idx in enumerate(candidates):
+        similarity_score = rank / len(candidates)
+        n = cluster_sizes.get(candidate_idx, 1)
+        
+        weight = np.log1p(n)
+        weighted_score = similarity_score * (1 + alpha * weight)
+        
+        scored.append((weighted_score, candidate_idx))
+        
+    scored.sort(key=lambda x: x[0], reverse=True)
+    valid_num = min(num_example, len(scored))
+    return [candidate_idx for _, candidate_idx in scored[:valid_num]]
 
 
 def random_drop_out_neighbors(traj, mask, p=0.5):
