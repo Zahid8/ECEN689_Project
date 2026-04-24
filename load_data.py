@@ -80,7 +80,13 @@ def load_processed_data(
     seq_weighted_path = f"{save_dir}/{split}_similar_traj_dicts_seq_weighted.pickle"
     seq_default_path = f"{save_dir}/{split}_similar_traj_dicts_seq.pickle"
     if use_weighted_similarity == "on":
-        seq_similarity_path = seq_weighted_path
+        # STES prompting uses hist similarity. For seq, allow graceful fallback
+        # so eval/train are not blocked when seq weighted files are absent.
+        seq_similarity_path = (
+            seq_weighted_path
+            if os.path.isfile(seq_weighted_path)
+            else seq_default_path
+        )
     elif use_weighted_similarity == "off":
         seq_similarity_path = seq_default_path
     else:
