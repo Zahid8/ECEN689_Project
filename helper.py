@@ -217,6 +217,80 @@ _build_single_query_input = build_single_query_input
 _run_single_inference = run_single_inference
 
 
+def apply_cluster_weighted_similarity(
+    similar_traj_dict: Dict[int, List[int]],
+    similar_scores_dict: Dict[int, Sequence[float]],
+    cluster_size_lookup: Dict[int, int],
+    alpha: float,
+    max_similar: int | None = None,
+) -> Tuple[Dict[int, List[int]], Dict[int, List[float]]]:
+    """Re-rank candidates by weighted similarity S*(1 + alpha*log(1+n)).
+
+    Args:
+        similar_traj_dict: Query-to-candidate ranking from base similarity.
+        similar_scores_dict: Query-to-score list aligned with candidate order.
+        cluster_size_lookup: Candidate index to cluster size ``n``.
+        alpha: Cluster weighting strength; ``alpha <= 0`` keeps original ranking.
+        max_similar: Optional cap on returned candidate count per query.
+
+    Returns:
+        Weighted candidate index lists and their weighted scores.
+    """
+    if alpha <= 0:
+        passthrough_scores = {
+            int(query_idx): [float(score) for score in scores]
+            for query_idx, scores in similar_scores_dict.items()
+        }
+        return similar_traj_dict, passthrough_scores
+
+    weighted_traj_dict: Dict[int, List[int]] = {}
+    weighted_scores_dict: Dict[int, List[float]] = {}
+    for query_idx, candidate_indices in similar_traj_dict.items():
+        base_scores = list(similar_scores_dict.get(query_idx, []))
+        pair_len = min(len(candidate_indices), len(base_scores))
+        if pair_len == 0:
+            weighted_traj_dict[query_idx] = []
+            weighted_scores_dict[query_idx] = []
+            continue
+
+        ranked_pairs: List[Tuple[int, float]] = []
+        for candidate_idx, score in zip(candidate_indices[:pair_len], base_scores[:pair_len]):
+            cluster_size = int(cluster_size_lookup.get(int(candidate_idx), 1))
+            weight = 1.0 + alpha * float(np.log1p(cluster_size))
+            weighted_score = float(score) * weight
+            ranked_pairs.append((int(candidate_idx), weighted_score))
+
+        ranked_pairs.sort(key=lambda x: x[1], reverse=True)
+        if max_similar is not None:
+            ranked_pairs = ranked_pairs[:max_similar]
+
+        weighted_traj_dict[query_idx] = [candidate_idx for candidate_idx, _ in ranked_pairs]
+        weighted_scores_dict[query_idx] = [score for _, score in ranked_pairs]
+
+    return weighted_traj_dict, weighted_scores_dict
+
+
+def get_cluster_size_lookup(
+    dataset: Any,
+    fold: int,
+    candidate_indices: Sequence[int],
+) -> Dict[int, int]:
+    """Build candidate-index -> cluster-size map from dataset metadata."""
+    if not hasattr(dataset, "cluster_meta_by_fold") or dataset.cluster_meta_by_fold is None:
+        return {}
+    if fold >= len(dataset.cluster_meta_by_fold):
+        return {}
+    fold_meta = dataset.cluster_meta_by_fold[fold]
+    lookup: Dict[int, int] = {}
+    for candidate_idx in candidate_indices:
+        meta = fold_meta.get(int(candidate_idx), None)
+        if meta is None:
+            lookup[int(candidate_idx)] = 1
+        else:
+            lookup[int(candidate_idx)] = int(meta.get("cluster_weight", 1))
+    return lookup
+
+
 def pges_query_centric_primary_seq(
     candidate_traj: torch.Tensor,
     query_traj: torch.Tensor,
@@ -284,6 +358,10 @@ def select_step2_examples_with_pges(
     device = pred_step1.device
     dist_weight = float(getattr(cfg.dataset, "dist_weight", 1.0))
     vel_weight = float(getattr(cfg.dataset, "vel_weight", 1.0))
+    cluster_weight_alpha = float(getattr(cfg.dataset, "cluster_weight_alpha", 0.0))
+    pges_cluster_weight_alpha = float(
+        getattr(cfg.dataset, "pges_cluster_weight_alpha", cluster_weight_alpha)
+    )
 
     query_seq_by_k = torch.cat(
         [hist_target.unsqueeze(0).repeat(pred_step1.shape[0], 1, 1), pred_step1],
@@ -343,10 +421,29 @@ def select_step2_examples_with_pges(
     combined = dist_weight * dist_norm + vel_weight * vel_norm
 
     top_m = min(num_example, combined.shape[0])
-    selected_positions = torch.topk(-combined, k=top_m).indices.tolist()
+    if pges_cluster_weight_alpha > 0.0:
+        base_similarity = (1.0 / (1.0 + combined)).detach().cpu().numpy().tolist()
+        query_to_candidates = {int(query_idx): list(valid_candidate_indices)}
+        query_to_scores = {int(query_idx): base_similarity}
+        cluster_size_lookup = get_cluster_size_lookup(
+            dataset=dataset,
+            fold=fold,
+            candidate_indices=valid_candidate_indices,
+        )
+        weighted_candidates, _ = apply_cluster_weighted_similarity(
+            similar_traj_dict=query_to_candidates,
+            similar_scores_dict=query_to_scores,
+            cluster_size_lookup=cluster_size_lookup,
+            alpha=pges_cluster_weight_alpha,
+            max_similar=top_m,
+        )
+        best_to_worst = weighted_candidates[int(query_idx)]
+    else:
+        selected_positions = torch.topk(-combined, k=top_m).indices.tolist()
+        best_to_worst = [valid_candidate_indices[pos] for pos in selected_positions]
+
     # Match ``sim_prompting`` / STES: feed examples worst-to-best (reverse of
     # similarity ranking among the chosen set).
-    best_to_worst = [valid_candidate_indices[pos] for pos in selected_positions]
     return best_to_worst[::-1]
 
 

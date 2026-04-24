@@ -1,3 +1,5 @@
+import os
+import pickle
 import random
 
 import numpy as np
@@ -25,6 +27,7 @@ class Dataset(torch.utils.data.Dataset):
         num_example=0,
         prompting="random",
         pool_ratio=1,
+        use_weighted_similarity="auto",
     ):
 
         self.name = name
@@ -49,7 +52,13 @@ class Dataset(torch.utils.data.Dataset):
         ) = load_processed_data(
             split,
             name,
+            use_weighted_similarity=use_weighted_similarity,
         )
+        self.cluster_meta_by_fold = None
+        cluster_meta_path = f"processed_data/{name}/{split}_cluster_meta_by_fold.pickle"
+        if os.path.isfile(cluster_meta_path):
+            with open(cluster_meta_path, mode="br") as fi:
+                self.cluster_meta_by_fold = pickle.load(fi)
 
         if split == "train":
             self.valid_indices_fold_pairs = []
@@ -122,6 +131,7 @@ class Dataset(torch.utils.data.Dataset):
 
 
 def create_dataset(split, cfg):
+    use_weighted_similarity = str(getattr(cfg.dataset, "use_weighted_similarity", "auto"))
 
     dataset = Dataset(
         name=cfg.dataset.name,
@@ -131,6 +141,7 @@ def create_dataset(split, cfg):
         num_example=cfg["dataset"]["num_example"],
         prompting=cfg["dataset"]["prompting"],
         pool_ratio=1,
+        use_weighted_similarity=use_weighted_similarity,
     )
 
     return dataset

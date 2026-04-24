@@ -49,6 +49,16 @@ def parse_args():
         default=128,
         help="Use STES top-N candidates before PG-ES refinement.",
     )
+    parser.add_argument(
+        "--weighted_similarity",
+        type=str,
+        default="auto",
+        choices=["auto", "on", "off"],
+        help=(
+            "Control weighted STES dict usage: auto (prefer weighted if present), "
+            "on (require weighted), off (force default non-weighted)."
+        ),
+    )
     return parser.parse_args()
 
 def main():
@@ -87,6 +97,7 @@ def main():
     # --- 🔄 Update Configuration with Arguments ---
     cfg.dataset.prompting = args.prompting_method
     cfg.dataset.name = dataset_name # Update dataset name for dataloader creation
+    cfg.dataset.use_weighted_similarity = args.weighted_similarity
 
 
     # --- 🏗️ Model Initialization and Loading ---

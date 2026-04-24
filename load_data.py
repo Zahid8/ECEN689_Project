@@ -9,6 +9,7 @@ import torch
 def load_processed_data(
     split: str,
     name: str,
+    use_weighted_similarity: str = "auto",
 ) -> Tuple[
     List[torch.Tensor],
     List[torch.Tensor],
@@ -50,15 +51,48 @@ def load_processed_data(
     ) as fi:
         valid_indices_by_fold = pickle.load(fi)
 
+    if use_weighted_similarity not in {"auto", "on", "off"}:
+        raise ValueError(
+            "use_weighted_similarity must be one of {'auto', 'on', 'off'}."
+        )
+
+    hist_weighted_path = f"{save_dir}/{split}_similar_traj_dicts_hist_weighted.pickle"
+    hist_default_path = f"{save_dir}/{split}_similar_traj_dicts_hist.pickle"
+    if use_weighted_similarity == "on":
+        hist_similarity_path = hist_weighted_path
+    elif use_weighted_similarity == "off":
+        hist_similarity_path = hist_default_path
+    else:
+        hist_similarity_path = (
+            hist_weighted_path
+            if os.path.isfile(hist_weighted_path)
+            else hist_default_path
+        )
+    if not os.path.isfile(hist_similarity_path):
+        raise FileNotFoundError(f"Similarity file not found: {hist_similarity_path}")
     with open(
-        f"{save_dir}/{split}_similar_traj_dicts_hist.pickle",
+        hist_similarity_path,
         mode="br",
     ) as fi:
         similarity_dicts = pickle.load(fi)
 
     similarity_dicts_seq = None
+    seq_weighted_path = f"{save_dir}/{split}_similar_traj_dicts_seq_weighted.pickle"
+    seq_default_path = f"{save_dir}/{split}_similar_traj_dicts_seq.pickle"
+    if use_weighted_similarity == "on":
+        seq_similarity_path = seq_weighted_path
+    elif use_weighted_similarity == "off":
+        seq_similarity_path = seq_default_path
+    else:
+        seq_similarity_path = (
+            seq_weighted_path
+            if os.path.isfile(seq_weighted_path)
+            else seq_default_path
+        )
+    if not os.path.isfile(seq_similarity_path):
+        raise FileNotFoundError(f"Similarity file not found: {seq_similarity_path}")
     with open(
-        f"{save_dir}/{split}_similar_traj_dicts_seq.pickle",
+        seq_similarity_path,
         mode="br",
     ) as fi:
         similarity_dicts_seq = pickle.load(fi)

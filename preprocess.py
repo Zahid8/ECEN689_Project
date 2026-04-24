@@ -17,6 +17,7 @@ from dc_pool_preprocess import (
     build_clustered_pool_dataset,
     load_dc_config,
 )
+from helper import apply_cluster_weighted_similarity
 from load_data import create_trajs_masks
 from utils.data import (
     load_data_jrdb_2dbox,
@@ -660,6 +661,49 @@ def compute_trajectory_similarity_crossspace(
     return similar_trajs, similar_scores
 
 
+def build_cluster_size_lookup_for_fold(
+    save_dir,
+    split,
+    fold_idx,
+    use_dual_track_dc=False,
+):
+    """Build candidate-index -> cluster-size map for one fold.
+
+    Returns an empty map when cluster metadata is unavailable.
+    """
+    cluster_meta_path = os.path.join(save_dir, f"{split}_cluster_meta_by_fold.pickle")
+    if not os.path.isfile(cluster_meta_path):
+        return {}
+
+    with open(cluster_meta_path, mode="br") as fi:
+        cluster_meta_by_fold = pickle.load(fi)
+    if fold_idx >= len(cluster_meta_by_fold):
+        return {}
+
+    fold_meta = cluster_meta_by_fold[fold_idx]
+    cluster_sizes = {}
+    for cluster_idx, meta in fold_meta.items():
+        cluster_sizes[int(cluster_idx)] = int(meta.get("cluster_weight", 1))
+
+    if not use_dual_track_dc:
+        return cluster_sizes
+
+    raw_to_cluster_path = os.path.join(
+        save_dir, f"{split}_pool_dc_fold_{fold_idx}_raw_idx_to_cluster_idx.pickle"
+    )
+    if not os.path.isfile(raw_to_cluster_path):
+        return cluster_sizes
+
+    with open(raw_to_cluster_path, mode="br") as fi:
+        raw_idx_to_cluster_idx = pickle.load(fi)
+
+    remapped_sizes = {}
+    for raw_idx, cluster_idx in raw_idx_to_cluster_idx.items():
+        cluster_size = cluster_sizes.get(int(cluster_idx), 1)
+        remapped_sizes[int(raw_idx)] = int(cluster_size)
+    return remapped_sizes
+
+
 # ============================================================
 #  Automatic r, stride setting
 # ============================================================
@@ -721,6 +765,12 @@ def main():
 
     parser.add_argument("--dist_weight", type=float, default=1.0)
     parser.add_argument("--vel_weight", type=float, default=1.0)
+    parser.add_argument(
+        "--cluster_weight_alpha",
+        type=float,
+        default=0.0,
+        help="Alpha in weighted STES: S * (1 + alpha * log(1 + cluster_size)).",
+    )
     parser.add_argument("--threshold", type=float, default=0.0)
     parser.add_argument(
         "--max_similar",
@@ -1043,7 +1093,7 @@ def main():
 
                 sim_matrix_dicts_shared = None
                 if not args.dual_track_dc:
-                    _, _, _, _, _, _, _, _, _, sim_matrix_dicts_shared = load_processed_data(
+                    *_, sim_matrix_dicts_shared = load_processed_data(
                         save_name,
                         split,
                         args.save_root,
@@ -1052,6 +1102,8 @@ def main():
 
                 similar_traj_dicts = []
                 similar_scores_dicts = []
+                weighted_traj_dicts = []
+                weighted_scores_dicts = []
 
                 for i, (valid_indices, pool_indices) in enumerate(
                     zip(valid_indices_by_fold, pool_indices_by_fold)
@@ -1100,12 +1152,36 @@ def main():
                     similar_traj_dicts.append(similar_traj_dict)
                     similar_scores_dicts.append(similar_scores_dict)
 
+                    cluster_size_lookup = build_cluster_size_lookup_for_fold(
+                        save_dir=save_dir,
+                        split=split,
+                        fold_idx=i,
+                        use_dual_track_dc=args.dual_track_dc,
+                    )
+                    weighted_traj_dict, weighted_scores_dict = apply_cluster_weighted_similarity(
+                        similar_traj_dict=similar_traj_dict,
+                        similar_scores_dict=similar_scores_dict,
+                        cluster_size_lookup=cluster_size_lookup,
+                        alpha=args.cluster_weight_alpha,
+                        max_similar=args.max_similar,
+                    )
+                    weighted_traj_dicts.append(weighted_traj_dict)
+                    weighted_scores_dicts.append(weighted_scores_dict)
+
                 out_path = os.path.join(
                     save_dir,
                     f"{split}_similar_traj_dicts_{similarity_scope}.pickle",
                 )
                 pickle_dump(similar_traj_dicts, out_path)
                 print(f"  -> saved similar_traj_dicts to {out_path}")
+
+                if args.cluster_weight_alpha > 0:
+                    weighted_out_path = os.path.join(
+                        save_dir,
+                        f"{split}_similar_traj_dicts_{similarity_scope}_weighted.pickle",
+                    )
+                    pickle_dump(weighted_traj_dicts, weighted_out_path)
+                    print(f"  -> saved weighted similar_traj_dicts to {weighted_out_path}")
 
 
 if __name__ == "__main__":
