@@ -610,7 +610,13 @@ def create_dataloader(split, dataset_name, cfg, subset=None):
     print(f"{split}: {len(dataset)} trajectories")
     num_workers = int(cfg.training.num_workers)
     pin_memory = bool(cfg.training.pin_mem)
-    persistent_workers = bool(getattr(cfg.training, "persistent_workers", num_workers > 0))
+    # Keep persistent workers only for training to avoid teardown hangs in eval.
+    default_persistent_workers = (split == "train") and (num_workers > 0)
+    persistent_workers = bool(
+        getattr(cfg.training, "persistent_workers", default_persistent_workers)
+    )
+    if split != "train":
+        persistent_workers = False
     prefetch_factor = int(getattr(cfg.training, "prefetch_factor", 2))
     dataloader_kwargs = {
         "batch_size": cfg.training.batch_size,
