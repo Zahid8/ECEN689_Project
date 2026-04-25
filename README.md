@@ -1,69 +1,71 @@
-<div align="center">
+<!-- <div align="center"> -->
 
-# Towards Predicting Any Human Trajectory In Context (NeurIPS 2025)
+# 
 
-**[[Paper](https://arxiv.org/abs/2506.00871)] [[Project Page](https://fujiry0.github.io/TrajICL-project-page/)] [[Poster](https://neurips.cc/media/PosterPDFs/NeurIPS%202025/115894.png?t=1763031083.2285979)]**
+## Run Preprocessing Code
 
-</div>
+### DC-related Arguments
 
-This is the official code release for our NeurIPS 2025 paper "Towards Predicting Any Human Trajectory In Context".
+- `-dc` / `--dynamic_cluster_processing`: Build a clustered-pool dataset and save
+  it as `processed_data/{name}_clustered/`. This path rewrites the processed
+  dataset to use cluster centroids in the pool.
+- `--dual_track_dc`: Keep target/query trajectories raw while storing DC pool
+  examples separately as per-fold centroid pools. This saves to
+  `processed_data/{name}_dual_dc/` and is the recommended option when evaluation
+  should use the same raw target trajectories.
+- `--dc_config <path>`: YAML config for dynamic clustering thresholds and
+  clustering parameters. Use this with either `-dc` or `--dual_track_dc`.
+- `--cluster_weight_alpha <float>`: Generate weighted STES dictionaries using
+  cluster size:
 
-## 🔍 TrajICL
+  ```text
+  S_weighted = S * (1 + alpha * log(1 + cluster_size))
+  ```
 
-![TrajICL](./misc/concept.png)
+The weighted file is saved as:
 
-Predicting accurate future trajectories requires adaptability, yet fine-tuning for each new scenario is often impractical for edge deployment. To address this, we introduce TrajICL, an In-Context Learning (ICL) framework for pedestrian trajectory prediction that enables robust adaptation to diverse environments at inference time without requiring weight updates.
-
-Our TrajICL implementation includes the following key features:
-
-- **Spatio-Temporal Similarity-based Example Selection (STES):** Selects relevant examples from observed trajectories by identifying similar motion patterns at corresponding locations within the same scene.
-- **Prediction-Guided Example Selection (PG-ES):** Refines example selection by utilizing both past and predicted future trajectories to account for long-term dynamics.
-- **Superior Adaptation & Generalization:** Leverages large-scale synthetic training to achieve remarkable adaptation, outperforming even fine-tuned approaches across in-domain and cross-domain benchmarks.
-
-
-### Run Preprocessing Code
-
-```bash
-bash bash scripts/preprocess.sh
+```text
+processed_data/motsynth_dual_dc/{split}_similar_traj_dicts_hist_weighted.pickle
 ```
 
-## 🔥 Training
+`load_data.py` supports three modes:
 
-### 1. Vanilla trajectory prediction (VTP) training
+- `auto`: prefer weighted files if they exist.
+- `on`: require weighted hist similarity.
+- `off`: force the original non-weighted similarity.
 
-VTP checkpoints are saved in `results/TrajICL`.
+For normal STES training, set this in the config if needed:
 
-```bash
-python train.py
+```yaml
+dataset:
+  use_weighted_similarity: auto  # auto | on | off
 ```
 
-### 2. In-context training
+PG-ES also supports cluster weighting at runtime through:
 
-For load_model.model_path, please specify the relative path (inside the `results/TrajICL` directory) to the checkpoint saved during VTP training.
-
-Example: If the full path is `results/TrajICL/robust-sunset-33/best_val_checkpoint.pth`.tar, you should set load_model.model_path to `robust-sunset-33/best_val_checkpoint.pth`.tar.
-
-```bash
-python train.py -m training.epochs=400 training.warmup_steps=12 dataset.num_example=8　load_model.model_path=robust-sunset-33/best_val_checkpoint.pth.tar
+```yaml
+dataset:
+  cluster_weight_alpha: 0.5
+  pges_cluster_weight_alpha: 0.5  # optional PG-ES override
 ```
 
-> ⚠️ Note: The path `robust-sunset-33/best_val_checkpoint.pth.tar` shown in the -m option above is just an example. Please modify this value to match the actual checkpoint path generated after running the VTP training (Step 1).
 
-## 🔍 Evaluation
-
-```bash
-python3 eval.py --model_path <ckpt> --dataset_name <> --prompting_method sim
-```
-
-with pges:
+## Evaluation
+Run evaluation thourgh:
 ```bash
 python3 eval.py \
   --model_path <ckpt> \
-  --dataset_name motsynth \
+  --dataset_name motsynth_dual_dc \
   --prompting_method sim \
-  --use_pges \
-  --pges_candidate_top_n 128
+  --weighted_similarity on
 ```
 
+- `--weighted_similarity {auto,on,off}`: Control whether evaluation uses the
+  weighted STES dictionary. `auto` prefers weighted files when present, `on`
+  requires weighted hist similarity, and `off` forces the original non-weighted
+  similarity.
+- `--use_pges`: Enable PG-ES evaluation. It first uses hist STES to get the
+  candidate pool, then re-ranks candidates using
+  `[target_past + stage1_prediction]` against each pool example's
+  `[past + future]`.
 
-```

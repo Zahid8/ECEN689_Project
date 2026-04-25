@@ -446,3 +446,104 @@ def load_ht21(
         )
 
     return joint_and_mask, filename_list, frames_list, pedestrians_list
+
+
+def _mot20_resolve_root_and_scenes(split: str, data_dir: str) -> Tuple[str, List[str]]:
+    """Pick MOT20 root folder and scene ids.
+
+    MOT20 benchmark test sequences do not include public GT. For validation, use all
+    available train sequences, which matches the evaluation-only setup.
+
+    Args:
+        split: train or val.
+        data_dir: Dataset root containing the ``MOT20`` directory.
+
+    Returns:
+        (root_dir, scene_names).
+
+    Raises:
+        FileNotFoundError: If no train GT is available.
+        ValueError: If the split is unsupported.
+    """
+    mot20 = os.path.join(data_dir, "MOT20")
+    list_path = os.path.join(mot20, f"mot20_{split}.txt")
+    if os.path.isfile(list_path):
+        with open(list_path, mode="r", encoding="utf-8") as f:
+            scenes = [line.strip() for line in f if line.strip()]
+        return os.path.join(mot20, "train"), scenes
+
+    if split in {"train", "val"}:
+        root = os.path.join(mot20, "train")
+        scenes = _ht21_scan_gt_scenes(root)
+        if not scenes:
+            raise FileNotFoundError(
+                f"No MOT20 sequences with gt/gt.txt under {root}. "
+                "Expected data/MOT20/train/MOT20-*/gt/gt.txt."
+            )
+        return root, scenes
+
+    raise ValueError(
+        "MOT20 test split has no public gt/gt.txt. Use --splits val to process "
+        "MOT20/train as validation data."
+    )
+
+
+def load_mot20(
+    split: str,
+    r: float = 50,
+    resize: float = 1,
+    stride: int = 21,
+    data_dir: str = "data",
+    step: int = 10,
+):
+    """Load MOT20 train GT with the same tensors as MOTSynth.
+
+    Args:
+        split: train or val. Both resolve to MOT20/train because MOT20/test has no GT.
+        r: Distance threshold for drop_distant_far.
+        resize: Scale applied to positions.
+        stride: Window stride passed to chunking.
+        data_dir: Root that contains the ``MOT20`` directory.
+        step: Frame subsample step.
+
+    Returns:
+        Same tuple as load_motsynth: joint_and_mask, filename_list, frames_list,
+        pedestrians_list.
+    """
+    root, static_scenes = _mot20_resolve_root_and_scenes(split, data_dir)
+    for scene in static_scenes:
+        gt_path = os.path.join(root, scene, "gt", "gt.txt")
+        if not os.path.isfile(gt_path):
+            raise FileNotFoundError(f"Missing GT for scene {scene!r}: {gt_path}")
+
+    trajectories, filename_list, frames_list, pedestrians_list = prepare_data_mot_gt(
+        static_scenes,
+        lambda scene, _root=root: os.path.join(_root, scene, "gt", "gt.txt"),
+        make_mot_standard_gt_df,
+        step=step,
+        seq_len=21,
+        stride=stride,
+    )
+
+    joint_and_mask = []
+
+    for scene_train in trajectories:
+        scene_train = scene_train[:, :, 2:]
+        scene_train_tmp = np.zeros([scene_train.shape[0], scene_train.shape[1], 8])
+        scene_train_tmp[:, :, :2] = scene_train
+        scene_train = scene_train_tmp
+        if r is not None:
+            scene_train, _ = drop_distant_far(scene_train, r=r)
+        scene_train_real = scene_train.reshape(
+            scene_train.shape[0], scene_train.shape[1], -1, 4
+        )
+        scene_train_real_ped = np.transpose(scene_train_real, (1, 0, 2, 3))
+        scene_train_mask = np.ones(scene_train_real_ped.shape[:-1])
+        joint_and_mask.append(
+            (
+                np.asarray(scene_train_real_ped)[:, :, 0:1, :3] * resize,
+                np.asarray(scene_train_mask)[:, :, 0:1],
+            ),
+        )
+
+    return joint_and_mask, filename_list, frames_list, pedestrians_list

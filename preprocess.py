@@ -23,6 +23,7 @@ from utils.data import (
     load_data_jrdb_2dbox,
     load_data_jta_all_visual_cues,
     load_ht21,
+    load_mot20,
     load_motsynth,
 )
 
@@ -114,6 +115,11 @@ def load_data(
         print(f"loaded {split} processed data !!!")
     elif name == "ht21":
         trajs, filename_list, frames_list, pedestrians_list = load_ht21(
+            split, r=r, resize=1, stride=stride, data_dir=data_dir
+        )
+        print(f"loaded {split} processed data !!!")
+    elif name == "mot20":
+        trajs, filename_list, frames_list, pedestrians_list = load_mot20(
             split, r=r, resize=1, stride=stride, data_dir=data_dir
         )
         print(f"loaded {split} processed data !!!")
@@ -716,6 +722,8 @@ def infer_r_stride(name):
     if name == "motsynth":
         r = 50
     elif name == "ht21":
+        r = 50
+    elif name == "mot20":
         r = 50
     elif name == "jrdb":
         r = 6
